@@ -14,5 +14,5 @@ jobs:
         with:
           name: ankimarkable-pure-paper-pure
           path: |
-            dist/ankimarkable-pure-0.1.0-paper-pure.tar.gz
+            dist/ankimarkable-pure-0.2.0-paper-pure.tar.gz
             dist/SHA256SUMS

@@ -18,7 +18,7 @@ Paper Pro, Move, reMarkable 1/2, and other firmware versions are unsupported. Th
 Download the application archive and `SHA256SUMS` from [Releases](https://github.com/aaronkazah/ankimarkable-pure/releases). Verify its checksum, then extract it:
 
 ```sh
-tar -xzf ankimarkable-pure-0.1.0-paper-pure.tar.gz
+tar -xzf ankimarkable-pure-0.2.0-paper-pure.tar.gz
 cd ankimarkable-pure
 ```
 
@@ -51,10 +51,14 @@ Launcher configuration is temporary. After reboot, reMarkable starts its normal 
 
 1. Choose a deck.
 2. Write your answer in the card area.
-3. Tap **Show Answer** to compare your work with the answer.
+3. Tap **Reveal answer** to compare your work with the answer.
 4. Choose **Again**, **Hard**, **Good**, or **Easy**. Anki schedules the next review.
 
-The toolbar provides Home, Undo, Eraser, Clear, Sync, and Exit. The Marker Plus eraser works too. Use two fingers to scroll long cards or pinch to change text size. The card menu lets you flag, bury, or suspend it. Close with **Exit** or AppLoad's swipe-down gesture.
+Buttons work with either the Marker tip or a finger. Choose **Thin**, **Medium**, or **Bold** for pressure-sensitive black ink; the selected tool has a black background. Tap **Eraser** to erase with the tip, or use the Marker Plus eraser. **Undo** and **Redo** affect handwriting only. **Clear** removes the current sketch and can be undone. Selecting a pen weight switches back from the eraser.
+
+**Bold text** increases card text weight for easier reading; it does not change pen thickness. Pen weight, bold text, and text size persist between launches. Use two fingers to scroll long cards or pinch to change text size. The monochrome controls use text labels and selection states rather than color.
+
+Use **Decks** to choose another deck, **Sync** to update your collection, and **Close** to return to reMarkable. The **More** menu provides card flags, bury, suspend, and **Undo last review**. Handwriting is a temporary answer sketch: it stays through answer reveal and clears when you grade or leave the card. The app has its own writing tools; reMarkable's notebook editor remains available after closing it.
 
 Scheduling uses Anki's backend, including FSRS when enabled in your collection. MathJax-style math and pre-rendered LaTeX SVGs are supported; releases bundle the math renderer and fonts. Sound playback, video, interactive JavaScript templates, and card authoring are not implemented.
 
@@ -108,7 +112,9 @@ cd ankimarkable-pure
 
 The build uses ARM64 Linux containers, Rust 1.95.0, and the matching official Paper Pure SDK. Intel/x86 hosts need Docker's ARM64 emulation. Allocate at least 8 GB to Docker. The first build downloads dependencies and the SDK; later builds reuse caches. No host Xcode changes are needed.
 
-Outputs are `dist/ankimarkable-pure-0.1.0-paper-pure.tar.gz` and `dist/SHA256SUMS`. SDK, launcher, math sources, and Rust dependencies are pinned. See [testing](docs/TESTING.md) for coverage and device checks.
+The native controls use compiled Tailwind utilities, embedded in the executable. After changing UI utility classes, run `./scripts/styles.sh` on an ARM64 Mac or Linux machine before building. The script uses a checksum-pinned standalone compiler; Node.js is not required.
+
+Outputs are `dist/ankimarkable-pure-0.2.0-paper-pure.tar.gz` and `dist/SHA256SUMS`. SDK, launcher, math sources, and Rust dependencies are pinned. See [testing](docs/TESTING.md) for coverage and device checks.
 
 ## License and attribution
 

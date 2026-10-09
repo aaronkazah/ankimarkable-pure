@@ -62,6 +62,52 @@ pub struct PenSample {
     pub erase: bool, // the eraser end (flipped pen) is in use
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PenWeight {
+    Thin,
+    #[default]
+    Medium,
+    Bold,
+}
+
+impl PenWeight {
+    pub fn width(self, pressure_width: u8) -> u8 {
+        let pressure = pressure_width.clamp(2, 6) - 2;
+        match self {
+            Self::Thin => 2 + pressure / 2,
+            Self::Medium => 4 + pressure / 2,
+            Self::Bold => 7 + pressure,
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct PenTap {
+    origin: Option<(i32, i32)>,
+}
+
+impl PenTap {
+    pub fn feed(&mut self, sample: PenSample) -> Option<(i32, i32)> {
+        if sample.down {
+            self.origin = if sample.erase {
+                None
+            } else {
+                Some((sample.x, sample.y))
+            };
+        }
+        if let Some((x, y)) = self.origin {
+            if (sample.x - x).abs() > 24 || (sample.y - y).abs() > 24 {
+                self.origin = None;
+            }
+        }
+        if sample.up {
+            self.origin.take()
+        } else {
+            None
+        }
+    }
+}
+
 pub struct Pen {
     fd: RawFd,
     grabbed: bool,
@@ -163,7 +209,7 @@ impl Pen {
         self.grabbed
     }
 
-    /// Track the scene rotation (see `orient.rs`). Point-mirroring both axes IS
+    /// Track AppLoad's scene rotation. Point-mirroring both axes is
     /// the 180° rotation, so ink lands under the physical pen tip again once the
     /// host composites the buffer rotated.
     pub fn set_flip180(&mut self, flip: bool) {
@@ -179,6 +225,54 @@ impl Pen {
     fn width(&self) -> u8 {
         // 2..=6 px from pressure.
         (2 + self.pressure_range.to_pixel(self.pressure, 5, false)) as u8
+    }
+
+    fn sample_event(&mut self, type_: u16, code: u16, value: i32) -> Option<PenSample> {
+        self.activity = true;
+        match type_ {
+            EV_ABS => match code {
+                ABS_X => self.x = value,
+                ABS_Y => self.y = value,
+                ABS_PRESSURE => self.pressure = value,
+                _ => {}
+            },
+            EV_KEY => match code {
+                BTN_TOUCH => {
+                    self.contact = value != 0;
+                    if !self.contact {
+                        self.pressure = 0;
+                    }
+                }
+                BTN_TOOL_RUBBER | BTN_TOOL_PEN => {
+                    self.prox = value != 0;
+                    self.rubber = code == BTN_TOOL_RUBBER && self.prox;
+                    if !self.prox {
+                        self.contact = false;
+                        self.pressure = 0;
+                    }
+                }
+                _ => {}
+            },
+            EV_SYN if code == SYN_REPORT => {
+                let contact = self.contact || self.pressure > 0;
+                let sample = if contact || self.was_contact {
+                    Some(PenSample {
+                        x: self.map_x(self.x),
+                        y: self.map_y(self.y),
+                        w: self.width(),
+                        down: contact && !self.was_contact,
+                        up: !contact,
+                        erase: self.rubber,
+                    })
+                } else {
+                    None
+                };
+                self.was_contact = contact;
+                return sample;
+            }
+            _ => {}
+        }
+        None
     }
 
     /// Read all pending events (non-blocking) and invoke `f` once per completed
@@ -205,60 +299,10 @@ impl Pen {
             }
             let count = (n as usize) / sz;
             for i in 0..count {
-                let ev: &InputEvent = unsafe { &*(buf.as_ptr().add(i * sz) as *const InputEvent) };
-                self.activity = true;
-                match ev.type_ {
-                    EV_ABS => match ev.code {
-                        ABS_X => self.x = ev.value,
-                        ABS_Y => self.y = ev.value,
-                        ABS_PRESSURE => self.pressure = ev.value,
-                        _ => {}
-                    },
-                    EV_KEY => match ev.code {
-                        BTN_TOUCH => self.contact = ev.value != 0,
-                        // Flipped pen: the eraser end. Track which end is in proximity.
-                        BTN_TOOL_RUBBER => {
-                            self.rubber = ev.value != 0;
-                            self.prox = ev.value != 0;
-                        }
-                        BTN_TOOL_PEN => {
-                            self.prox = ev.value != 0;
-                            if ev.value != 0 {
-                                self.rubber = false;
-                            } else {
-                                // Some firmwares report contact only via pressure.
-                                self.contact = false;
-                            }
-                        }
-                        _ => {}
-                    },
-                    EV_SYN if ev.code == SYN_REPORT => {
-                        let contact = self.contact || self.pressure > 0;
-                        let px = self.map_x(self.x);
-                        let py = self.map_y(self.y);
-                        if contact {
-                            f(PenSample {
-                                x: px,
-                                y: py,
-                                w: self.width(),
-                                down: !self.was_contact,
-                                up: false,
-                                erase: self.rubber,
-                            });
-                            self.was_contact = true;
-                        } else if self.was_contact {
-                            f(PenSample {
-                                x: px,
-                                y: py,
-                                w: self.width(),
-                                down: false,
-                                up: true,
-                                erase: self.rubber,
-                            });
-                            self.was_contact = false;
-                        }
-                    }
-                    _ => {}
+                let ev =
+                    unsafe { (buf.as_ptr().add(i * sz) as *const InputEvent).read_unaligned() };
+                if let Some(sample) = self.sample_event(ev.type_, ev.code, ev.value) {
+                    f(sample);
                 }
             }
         }
@@ -315,4 +359,105 @@ fn resolve_marker() -> io::Result<(RawFd, String)> {
         io::ErrorKind::NotFound,
         "no Elan marker input device found",
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pen() -> Pen {
+        Pen {
+            fd: -1,
+            grabbed: false,
+            x_range: AxisRange::new(0, 9620).unwrap(),
+            y_range: AxisRange::new(0, 13000).unwrap(),
+            pressure_range: AxisRange::new(0, 4096).unwrap(),
+            x: 3000,
+            y: 4000,
+            pressure: 0,
+            contact: false,
+            was_contact: false,
+            rubber: false,
+            prox: false,
+            activity: false,
+            flip180: false,
+            dev_path: String::new(),
+        }
+    }
+
+    #[test]
+    fn leaving_proximity_ends_contact_even_when_pressure_release_is_missing() {
+        let mut pen = pen();
+        pen.sample_event(EV_KEY, BTN_TOOL_PEN, 1);
+        pen.sample_event(EV_ABS, ABS_PRESSURE, 1000);
+        assert!(pen.sample_event(EV_SYN, SYN_REPORT, 0).unwrap().down);
+        pen.sample_event(EV_KEY, BTN_TOOL_PEN, 0);
+        assert!(pen.sample_event(EV_SYN, SYN_REPORT, 0).unwrap().up);
+        assert!(pen.sample_event(EV_SYN, SYN_REPORT, 0).is_none());
+        assert!(!pen.in_proximity());
+    }
+
+    #[test]
+    fn tip_release_does_not_join_separate_letters() {
+        let mut pen = pen();
+        pen.sample_event(EV_ABS, ABS_PRESSURE, 1000);
+        pen.sample_event(EV_KEY, BTN_TOUCH, 1);
+        assert!(pen.sample_event(EV_SYN, SYN_REPORT, 0).unwrap().down);
+        pen.sample_event(EV_KEY, BTN_TOUCH, 0);
+        assert!(pen.sample_event(EV_SYN, SYN_REPORT, 0).unwrap().up);
+        pen.sample_event(EV_KEY, BTN_TOUCH, 1);
+        assert!(pen.sample_event(EV_SYN, SYN_REPORT, 0).unwrap().down);
+    }
+
+    #[test]
+    fn pen_buttons_fire_once_on_lift_and_writing_never_counts_as_a_tap() {
+        let sample = PenSample {
+            x: 300,
+            y: 50,
+            w: 3,
+            down: true,
+            up: false,
+            erase: false,
+        };
+        let mut tap = PenTap::default();
+        assert_eq!(tap.feed(sample), None);
+        assert_eq!(
+            tap.feed(PenSample {
+                down: false,
+                up: true,
+                ..sample
+            }),
+            Some((300, 50))
+        );
+        assert_eq!(
+            tap.feed(PenSample {
+                down: false,
+                up: true,
+                ..sample
+            }),
+            None
+        );
+        tap.feed(sample);
+        tap.feed(PenSample {
+            x: 350,
+            down: false,
+            ..sample
+        });
+        assert_eq!(
+            tap.feed(PenSample {
+                down: false,
+                up: true,
+                ..sample
+            }),
+            None
+        );
+    }
+
+    #[test]
+    fn weights_are_distinct_even_at_light_pressure() {
+        assert_eq!(PenWeight::Thin.width(2), 2);
+        assert_eq!(PenWeight::Medium.width(2), 4);
+        assert_eq!(PenWeight::Bold.width(2), 7);
+        assert!(PenWeight::Bold.width(6) > PenWeight::Bold.width(2));
+    }
 }

@@ -1,6 +1,6 @@
 //! Native Anki reviews and pen answers on reMarkable Paper Pure.
 
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
@@ -8,9 +8,11 @@ use anyhow::Result;
 
 use ankimarkable_pure::backend::{self, Backend, Counts, DeckInfo, Stats, SyncReport};
 use ankimarkable_pure::gesture::{CardGesture, CardTouch};
-use ankimarkable_pure::pen::Pen;
+use ankimarkable_pure::pen::{Pen, PenTap};
 use ankimarkable_pure::prefs::Prefs;
-use ankimarkable_pure::qtfb::{Qtfb, INPUT_TOUCH_PRESS, INPUT_TOUCH_RELEASE, INPUT_TOUCH_UPDATE};
+use ankimarkable_pure::qtfb::{
+    InputEvent, Qtfb, INPUT_TOUCH_PRESS, INPUT_TOUCH_RELEASE, INPUT_TOUCH_UPDATE,
+};
 use ankimarkable_pure::render::{CardView, Renderer, ZOOM_STEPS};
 use ankimarkable_pure::ui::{self, Hit, HomeHit, MenuState, Phase};
 use ankimarkable_pure::whiteboard::Whiteboard;
@@ -95,6 +97,9 @@ fn run(mut qtfb: Qtfb) -> Result<()> {
     };
 
     let mut pen_inverted = false;
+    let mut pen_tap = PenTap::default();
+    let mut pen_draws = false;
+    let mut pen_buttons = VecDeque::new();
 
     // App opens on the Home screen: a collapsible deck tree + streak.
     let mut screen = Screen::Home;
@@ -123,28 +128,13 @@ fn run(mut qtfb: Qtfb) -> Result<()> {
     // STALE_IDLE while such a state is latched, we force it closed below.
     let mut last_touch: Option<Instant> = None;
     const STALE_IDLE: Duration = Duration::from_millis(2000);
-    // The fastScratch scratchpad overlay draws on top of us and needs the marker.
-    // The QTFB protocol sends NO background/focus message to external apps —
-    // rm-appload forwards only MESSAGE_USERINPUT; the MESSAGE_SYSTEM_* traffic
-    // lives on a management socket external apps never join — so this state file
-    // is the ONLY foreground signal we get. While it reports open we release the
-    // pen's exclusive EVIOCGRAB (so the overlay can ink) and drop our own pen
-    // samples. Known limitation: a DIFFERENT AppLoad app foregrounded over us is
-    // undetectable — we'd keep the grab and fight it for the marker.
-    const SCRATCHPAD_STATE: &str = "/home/root/.scratchpad-state";
-    const SCRATCH_POLL: Duration = Duration::from_millis(300);
-    let mut pen_paused = false;
-    let mut last_scratch_check: Option<Instant> = None;
-
     // Review state, populated when a deck is picked.
     let mut counts = Counts::default();
     let mut current: Option<backend::ReviewCard> = None;
-    let mut menu = MenuState::Closed; // ⋮ overflow menu (Flag… / Bury / Suspend)
-                                      // Persisted preferences: colour vs black-and-white rendering and the zoom
-                                      // step every card opens at. Loaded here, saved whenever either changes, so
-                                      // both survive the next card AND the next launch.
+    let mut menu = MenuState::Closed;
     let prefs_path = std::path::PathBuf::from(format!("{DATA_DIR}/prefs"));
     let mut prefs = Prefs::load(&prefs_path);
+    wb.weight = prefs.pen_weight;
     eprintln!("ankimarkable-pure: zoom={}x", ZOOM_STEPS[prefs.zoom_idx]);
     // Live scrollable/zoomable card document (None until a card is shown).
     let mut view: Option<CardView> = None;
@@ -175,35 +165,6 @@ fn run(mut qtfb: Qtfb) -> Result<()> {
         }
         if wb.is_inking() && last_pen.map_or(true, |t| t.elapsed() >= STALE_IDLE) {
             wb.end_stroke();
-        }
-        // Poll the scratchpad state file (missing/unreadable = closed). On open we
-        // release the pen grab and close any stroke the overlay interrupted (a
-        // never-ending `active` stroke would latch palm rejection on). While
-        // closed, set_grab(true) runs EVERY check — a no-op when already grabbed,
-        // but it recovers a grab lost in a race with fastScratch's own retries.
-        if last_scratch_check.map_or(true, |t| t.elapsed() >= SCRATCH_POLL) {
-            last_scratch_check = Some(Instant::now());
-            let open = std::fs::read_to_string(SCRATCHPAD_STATE)
-                .map(|s| {
-                    s.split_whitespace()
-                        .collect::<String>()
-                        .contains("\"open\":true")
-                })
-                .unwrap_or(false);
-            if open != pen_paused {
-                pen_paused = open;
-                if open {
-                    wb.end_stroke();
-                }
-                eprintln!(
-                    "ankimarkable: scratchpad {} — pen {}",
-                    if open { "open" } else { "closed" },
-                    if open { "released" } else { "re-grabbed" }
-                );
-            }
-            if let Some(p) = pen.as_mut() {
-                p.set_grab(!open);
-            }
         }
         let inverted = qtfb.pen_inverted();
         if inverted != pen_inverted {
@@ -247,69 +208,78 @@ fn run(mut qtfb: Qtfb) -> Result<()> {
         // Pen: drain ALL samples and ink them (the refresh is flushed at the loop
         // top, coalesced and non-blocking — never per-sample, never blocking).
         if fds.len() == 2 && fds[1].revents & (libc::POLLIN | libc::POLLERR | libc::POLLHUP) != 0 {
-            if pen_paused {
-                // The scratchpad overlay owns the pen: still drain the fd (it keeps
-                // reporting to us even ungrabbed) but drop the samples and skip the
-                // last_pen/pen_hover stamping — a released pen must not trigger
-                // palm rejection against the overlay's own writing.
-                let p = pen.as_mut().unwrap();
-                let r = p.drain(|_| {});
-                let _ = p.take_activity();
-                if r.is_err() {
-                    eprintln!("ankimarkable: pen read error — dropping pen");
-                    pen = None;
+            let mut inked = false;
+            let mut stroke_started = false;
+            // The PEN WINS over touch. Gating ink on `!touch.multi_active()` meant a
+            // resting palm — which reports as ≥2 card contacts — silently swallowed
+            // every sample for as long as the hand stayed down, i.e. writing simply
+            // didn't work. A palm can't be told from fingers by position, but the
+            // marker is separate hardware: if it's reporting, the hand on the glass
+            // is a palm, so ink unconditionally and cancel the phantom gesture below.
+            let r = pen.as_mut().unwrap().drain(|s| {
+                inked = true;
+                if s.down {
+                    pen_draws =
+                        reviewing && menu == MenuState::Closed && ui::in_card_region(s.x, s.y);
                 }
-            } else {
-                let mut inked = false;
-                let mut stroke_started = false;
-                // The PEN WINS over touch. Gating ink on `!touch.multi_active()` meant a
-                // resting palm — which reports as ≥2 card contacts — silently swallowed
-                // every sample for as long as the hand stayed down, i.e. writing simply
-                // didn't work. A palm can't be told from fingers by position, but the
-                // marker is separate hardware: if it's reporting, the hand on the glass
-                // is a palm, so ink unconditionally and cancel the phantom gesture below.
-                let r = pen.as_mut().unwrap().drain(|s| {
-                    inked = true;
-                    if reviewing {
-                        stroke_started |= s.down;
-                        wb.ink_sample(s, &mut qtfb);
+                if let Some((x, y)) = pen_tap.feed(s) {
+                    if !pen_draws {
+                        pen_buttons.push_back(InputEvent {
+                            input_type: INPUT_TOUCH_PRESS,
+                            dev_id: -1,
+                            x,
+                            y,
+                            d: 0,
+                        });
                     }
-                });
-                let p = pen.as_mut().unwrap();
-                pen_hover = p.in_proximity();
-                let pen_events = p.take_activity();
-                if stroke_started {
-                    // Drop whatever the palm registered before the tip landed, so it can
-                    // neither latch `multi_active()` nor fire a scroll/pinch mid-stroke.
-                    touch = CardTouch::new();
                 }
-                // Stamp on ANY marker traffic, hover included — the palm-rejection window
-                // must already be open when the hand lands ahead of the first ink sample.
-                if inked || pen_events {
-                    last_pen = Some(Instant::now());
+                if pen_draws {
+                    stroke_started |= s.down;
+                    wb.ink_sample(s, &mut qtfb);
                 }
-                if inked && reviewing {
-                    // Ship the freshly-inked pixels NOW (same iteration) rather than
-                    // waiting for the next poll cycle — one less cycle of ink latency.
-                    wb.flush_ink(&mut qtfb);
+                if s.up {
+                    pen_draws = false;
                 }
-                if r.is_err() {
-                    eprintln!("ankimarkable: pen read error — dropping pen");
-                    pen = None;
-                }
+            });
+            let p = pen.as_mut().unwrap();
+            pen_hover = p.in_proximity();
+            let pen_events = p.take_activity();
+            if stroke_started {
+                // Drop whatever the palm registered before the tip landed, so it can
+                // neither latch `multi_active()` nor fire a scroll/pinch mid-stroke.
+                touch = CardTouch::new();
+            }
+            // Stamp on ANY marker traffic, hover included — the palm-rejection window
+            // must already be open when the hand lands ahead of the first ink sample.
+            if inked || pen_events {
+                last_pen = Some(Instant::now());
+            }
+            if inked && reviewing {
+                // Ship the freshly-inked pixels NOW (same iteration) rather than
+                // waiting for the next poll cycle — one less cycle of ink latency.
+                wb.flush_ink(&mut qtfb);
+            }
+            if r.is_err() {
+                eprintln!("ankimarkable: pen read error — dropping pen");
+                pen = None;
             }
         }
 
-        if fds[0].revents & (libc::POLLIN | libc::POLLERR | libc::POLLHUP) == 0 {
+        if pen_buttons.is_empty()
+            && fds[0].revents & (libc::POLLIN | libc::POLLERR | libc::POLLHUP) == 0
+        {
             continue;
         }
         // Drain EVERY queued touch event this wake (motion arrives as repeated
         // PRESS with the same dev_id on this panel — one-event-per-poll would lag).
         'input: loop {
-            let ev = match qtfb.recv_input_nonblock() {
-                Ok(Some(ev)) => ev,
-                Ok(None) => break 'input,
-                Err(_) => break 'main, // socket closed
+            let (ev, from_pen) = match pen_buttons.pop_front() {
+                Some(ev) => (ev, true),
+                None => match qtfb.recv_input_nonblock() {
+                    Ok(Some(ev)) => (ev, false),
+                    Ok(None) => break 'input,
+                    Err(_) => break 'main,
+                },
             };
             let ty = ev.input_type;
             let is_touch =
@@ -323,7 +293,7 @@ fn run(mut qtfb: Qtfb) -> Result<()> {
             // the hover arm the palm gets a head start and registers as a gesture).
             let pen_recent = last_pen.map_or(false, |t| t.elapsed() < PALM_WINDOW);
             let hovering = pen_hover && last_pen.map_or(false, |t| t.elapsed() < HOVER_WINDOW);
-            if reviewing && (pen_recent || hovering || wb.is_inking()) {
+            if !from_pen && reviewing && (pen_recent || hovering || wb.is_inking()) {
                 // A swallowed RELEASE must still retire its contact — otherwise the
                 // palm stays "down" in the tracker and latches multi_active() on.
                 if ty == INPUT_TOUCH_RELEASE {
@@ -336,7 +306,7 @@ fn run(mut qtfb: Qtfb) -> Result<()> {
             last_touch = Some(Instant::now());
 
             // ── Review-screen gesture routing (menu-open taps skip to hit_menu) ──
-            if reviewing && menu == MenuState::Closed {
+            if !from_pen && reviewing && menu == MenuState::Closed {
                 let in_card = ui::in_card_region(ev.x, ev.y);
                 if in_card || touch.is_tracked(ev.dev_id) || touch.multi_active() {
                     let fed = touch.feed(ty, ev.dev_id, ev.x, ev.y, in_card);
@@ -495,7 +465,7 @@ fn run(mut qtfb: Qtfb) -> Result<()> {
                             format!("{body}\n\nTap anywhere to continue.")
                         };
                         ui::draw_message(&mut qtfb, &renderer, &report.headline, &msg);
-                        wait_for_tap(&mut qtfb);
+                        wait_for_tap(&qtfb, &mut pen);
                         all_decks = backend.deck_infos().unwrap_or_default();
                         visible = visible_decks(&all_decks, &collapsed);
                         clamp_scroll(&mut scroll, visible.len());
@@ -545,6 +515,13 @@ fn run(mut qtfb: Qtfb) -> Result<()> {
                                 }
                             }
                             advanced = true;
+                            menu = MenuState::Closed;
+                        }
+                        ui::MenuHit::UndoReview => {
+                            if backend.undo().unwrap_or(false) {
+                                session_reviews = session_reviews.saturating_sub(1);
+                                advanced = true;
+                            }
                             menu = MenuState::Closed;
                         }
                         // Tapped outside → just dismiss.
@@ -601,7 +578,7 @@ fn run(mut qtfb: Qtfb) -> Result<()> {
                             format!("{body}\n\nTap anywhere to continue.")
                         };
                         ui::draw_message(&mut qtfb, &renderer, &report.headline, &msg);
-                        wait_for_tap(&mut qtfb);
+                        wait_for_tap(&qtfb, &mut pen);
                         status = report.headline;
                         counts = backend.counts().unwrap_or_default();
                         current = backend.next_card().unwrap_or(None);
@@ -644,25 +621,28 @@ fn run(mut qtfb: Qtfb) -> Result<()> {
                         }
                     }
                     Hit::Undo => {
-                        // Undo the last pen stroke; when the whiteboard is empty, fall
-                        // through to undoing the last graded card (Anki collection undo).
-                        if !wb.undo(&mut qtfb) {
-                            match backend.undo() {
-                                Ok(true) => {
-                                    session_reviews = session_reviews.saturating_sub(1);
-                                    counts = backend.counts().unwrap_or_default();
-                                    current = backend.next_card().unwrap_or(None);
-                                    phase = Phase::Question;
-                                    wb.clear_ink();
-                                    invalidate_view(&mut view, &mut wb);
-                                    redraw(
-                                        &mut qtfb, &renderer, &mut wb, &current, &mut view, phase,
-                                        counts, &status, menu, &prefs,
-                                    );
-                                }
-                                _ => {} // nothing to undo
-                            }
-                        }
+                        wb.undo(&mut qtfb);
+                    }
+                    Hit::Redo => wb.redo(&mut qtfb),
+                    Hit::PenWeight(weight) => {
+                        wb.end_stroke();
+                        wb.weight = weight;
+                        wb.eraser = false;
+                        prefs.pen_weight = weight;
+                        prefs.save_or_warn(&prefs_path);
+                        redraw(
+                            &mut qtfb, &renderer, &mut wb, &current, &mut view, phase, counts,
+                            &status, menu, &prefs,
+                        );
+                    }
+                    Hit::TextWeightToggle => {
+                        prefs.bold_text = !prefs.bold_text;
+                        prefs.save_or_warn(&prefs_path);
+                        view = None;
+                        redraw(
+                            &mut qtfb, &renderer, &mut wb, &current, &mut view, phase, counts,
+                            &status, menu, &prefs,
+                        );
                     }
                     Hit::Clear => wb.clear(&mut qtfb),
                     Hit::EraserToggle => {
@@ -726,6 +706,7 @@ fn redraw(
                     ui::WIDTH as u32,
                     ui::CARD_H as u32,
                     prefs.zoom_idx,
+                    prefs.bold_text,
                 );
                 wb.set_view(v.scroll_css() as f32, v.zoom() as f32);
                 *view = Some(v);
@@ -733,7 +714,9 @@ fn redraw(
             let v = view.as_ref().unwrap();
             let mut window = v.paint_window();
             ui::draw_scroll_indicator(&mut window, v.scroll_phys(), v.max_scroll(), v.content_h());
-            ui::compose_review(renderer, &window, card, phase, counts, status, eraser, menu)
+            ui::compose_review(
+                renderer, &window, card, phase, counts, status, eraser, prefs, menu,
+            )
         }
         // Keep the top menu bar so Home / Sync / Exit still work (an empty deck or
         // a finished one must not strand you on a chrome-less screen).
@@ -860,12 +843,39 @@ fn wait_for_exit(qtfb: &Qtfb) {
     }
 }
 
-/// Block on a "tap anywhere to continue" screen: returns on any touch press (or
-/// shutdown). UPDATE/RELEASE are ignored; the pen fd isn't polled here — its
-/// samples just queue and get drained on the next main-loop iteration.
-fn wait_for_tap(qtfb: &mut Qtfb) {
+/// Acknowledge a sync report with a finger or the Marker.
+fn wait_for_tap(qtfb: &Qtfb, pen: &mut Option<Pen>) {
+    let mut tap = PenTap::default();
     while RUNNING.load(Ordering::SeqCst) {
-        match qtfb.poll_input() {
+        let mut fds = vec![libc::pollfd {
+            fd: qtfb.raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        }];
+        if let Some(pen) = pen.as_ref() {
+            fds.push(libc::pollfd {
+                fd: pen.fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            });
+        }
+        unsafe {
+            libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, 500);
+        }
+        if fds.len() == 2 && fds[1].revents & libc::POLLIN != 0 {
+            let mut tapped = false;
+            let _ = pen
+                .as_mut()
+                .unwrap()
+                .drain(|s| tapped |= tap.feed(s).is_some());
+            if tapped {
+                break;
+            }
+        }
+        if fds[0].revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) == 0 {
+            continue;
+        }
+        match qtfb.recv_input_nonblock() {
             Ok(Some(ev)) => {
                 if ev.input_type == INPUT_TOUCH_PRESS {
                     break;

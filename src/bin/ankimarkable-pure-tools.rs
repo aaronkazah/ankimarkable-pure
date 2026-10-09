@@ -38,7 +38,9 @@ fn preview(collection: &Path, directory: &Path) -> Result<()> {
         ("question.png", &card.question_html, ui::Phase::Question),
         ("answer.png", &card.answer_html, ui::Phase::Answer),
     ] {
-        let window = renderer.render_rgba(html, ui::WIDTH as u32, ui::CARD_H as u32);
+        let window = renderer
+            .build_card_view_at(html, ui::WIDTH as u32, ui::CARD_H as u32, 0, false)
+            .paint_window();
         save_png(
             &directory.join(name),
             &ui::compose_review(
@@ -49,6 +51,7 @@ fn preview(collection: &Path, directory: &Path) -> Result<()> {
                 counts,
                 &deck.name,
                 false,
+                &ankimarkable_pure::prefs::Prefs::default(),
                 ui::MenuState::Closed,
             ),
         )?;

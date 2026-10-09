@@ -21,8 +21,8 @@
 //! Ink is confined to the card region (`ui::CARD_Y .. CARD_Y+CARD_H`); pen samples
 //! over the top/bottom chrome are ignored so writing never spills onto the bars.
 
-use crate::pen::PenSample;
-use crate::qtfb::{Qtfb, REFRESH_MODE_ANIMATE, REFRESH_MODE_CONTENT, REFRESH_MODE_FAST};
+use crate::pen::{PenSample, PenWeight};
+use crate::qtfb::{Qtfb, REFRESH_MODE_CONTENT, REFRESH_MODE_FAST, REFRESH_MODE_UFAST};
 use crate::ui::{CARD_H, CARD_Y, HEIGHT, WIDTH};
 
 /// Eraser brush radius (px) — much larger than a pen stroke so the eraser end
@@ -37,10 +37,16 @@ struct Stroke {
     pts: Vec<(i32, i32, u8)>,
 }
 
+enum InkEdit {
+    Stroke(Stroke),
+    Clear,
+}
+
 pub struct Whiteboard {
     base: Vec<u8>, // WIDTH*HEIGHT*4 RGBA — composited review/message, no ink
     ink: Vec<u8>,  // WIDTH*HEIGHT coverage
-    strokes: Vec<Stroke>,
+    history: Vec<InkEdit>,
+    redo: Vec<InkEdit>,
     active: Option<Stroke>,
     last: Option<(i32, i32)>,
     /// Card scroll offset (CSS px) the ink is currently rebuilt for.
@@ -52,6 +58,7 @@ pub struct Whiteboard {
     // drain, not one per sample), which is what keeps inking smooth.
     dirty: Option<(i32, i32, i32, i32)>,
     pub eraser: bool,
+    pub weight: PenWeight,
 }
 
 fn in_card(y: i32) -> bool {
@@ -63,18 +70,16 @@ impl Whiteboard {
         Self {
             base: vec![255u8; WIDTH * HEIGHT * 4],
             ink: vec![0u8; WIDTH * HEIGHT],
-            strokes: Vec::new(),
+            history: Vec::new(),
+            redo: Vec::new(),
             active: None,
             last: None,
             scroll: 0.0,
             zoom: 1.0,
             dirty: None,
             eraser: false,
+            weight: PenWeight::default(),
         }
-    }
-
-    pub fn has_ink(&self) -> bool {
-        !self.strokes.is_empty() || self.active.is_some()
     }
 
     /// Replace the base frame (e.g. after composing the answer side). Ink is kept.
@@ -108,7 +113,8 @@ impl Whiteboard {
 
     /// Drop all ink + strokes (used when advancing to the next card).
     pub fn clear_ink(&mut self) {
-        self.strokes.clear();
+        self.history.clear();
+        self.redo.clear();
         self.active = None;
         self.last = None;
         self.dirty = None;
@@ -128,7 +134,8 @@ impl Whiteboard {
     pub fn end_stroke(&mut self) {
         if let Some(st) = self.active.take() {
             if !st.pts.is_empty() {
-                self.strokes.push(st);
+                self.history.push(InkEdit::Stroke(st));
+                self.redo.clear();
             }
         }
         self.last = None;
@@ -155,7 +162,7 @@ impl Whiteboard {
         }
         let _ = qtfb.set_refresh_mode(REFRESH_MODE_CONTENT);
         let _ = qtfb.update_full();
-        // The full GC16 colour refresh supersedes any pending partial AND clears
+        // The full content refresh supersedes any pending partial AND clears
         // accumulated fast-waveform artifacts (ghosts / "empty white rectangles").
         self.dirty = None;
     }
@@ -189,17 +196,48 @@ impl Whiteboard {
     /// Undo the last completed stroke: rebuild ink from the remainder, full refresh.
     /// Returns `false` when there was no stroke to undo (caller may then undo the card).
     pub fn undo(&mut self, qtfb: &mut Qtfb) -> bool {
-        if self.strokes.pop().is_none() {
+        if !self.undo_edit() {
             return false;
         }
-        self.rebuild_ink();
         self.blit_full(qtfb);
         true
     }
 
+    fn undo_edit(&mut self) -> bool {
+        self.end_stroke();
+        let Some(edit) = self.history.pop() else {
+            return false;
+        };
+        self.redo.push(edit);
+        self.rebuild_ink();
+        true
+    }
+
+    fn redo_edit(&mut self) -> bool {
+        let Some(edit) = self.redo.pop() else {
+            return false;
+        };
+        self.history.push(edit);
+        self.rebuild_ink();
+        true
+    }
+
+    pub fn redo(&mut self, qtfb: &mut Qtfb) {
+        if self.redo_edit() {
+            self.blit_full(qtfb);
+        }
+    }
+
+    fn clear_edit(&mut self) {
+        self.end_stroke();
+        self.history.push(InkEdit::Clear);
+        self.redo.clear();
+        self.ink.fill(0);
+    }
+
     /// Clear the whiteboard (button): drop ink, restore base, full refresh.
     pub fn clear(&mut self, qtfb: &mut Qtfb) {
-        self.clear_ink();
+        self.clear_edit();
         self.blit_full(qtfb);
     }
 
@@ -207,9 +245,16 @@ impl Whiteboard {
         for b in self.ink.iter_mut() {
             *b = 0;
         }
-        let strokes = std::mem::take(&mut self.strokes);
+        let history = std::mem::take(&mut self.history);
         let (scroll, zoom) = (self.scroll, self.zoom);
-        for st in &strokes {
+        for edit in &history {
+            let st = match edit {
+                InkEdit::Clear => {
+                    self.ink.fill(0);
+                    continue;
+                }
+                InkEdit::Stroke(st) => st,
+            };
             let mut prev: Option<(i32, i32)> = None;
             for &(cx, cy, w) in &st.pts {
                 // content CSS → panel px through the CURRENT scroll/zoom. Radius
@@ -225,7 +270,7 @@ impl Whiteboard {
                 prev = Some((x, y));
             }
         }
-        self.strokes = strokes;
+        self.history = history;
     }
 
     /// Ink one pen sample into the framebuffer WITHOUT refreshing — the dirty rect
@@ -233,18 +278,32 @@ impl Whiteboard {
     /// refresh) is what makes inking smooth: a QTFB partial-refresh per sample can't
     /// keep up with the pen's sample rate and reads as laggy/jittery.
     pub fn ink_sample(&mut self, s: PenSample, qtfb: &mut Qtfb) {
-        if s.up {
-            if let Some(st) = self.active.take() {
-                if !st.pts.is_empty() {
-                    self.strokes.push(st);
+        let Some((minx, miny, maxx, maxy)) = self.record_sample(s) else {
+            return;
+        };
+        let shm: &mut [u8] = &mut *qtfb.shm;
+        for yy in miny..=maxy {
+            for xx in minx..=maxx {
+                let idx = yy as usize * WIDTH + xx as usize;
+                let bi = idx * 4;
+                let di = idx * 3;
+                let ia = 255 - self.ink[idx] as u32;
+                for k in 0..3 {
+                    shm[di + k] = ((self.base[bi + k] as u32 * ia) / 255) as u8;
                 }
             }
-            self.last = None;
-            return;
+        }
+    }
+
+    fn record_sample(&mut self, s: PenSample) -> Option<(i32, i32, i32, i32)> {
+        if s.up {
+            self.end_stroke();
+            return None;
         }
         // The eraser end (flipped pen) OR the Eraser toggle both erase.
         let erasing = s.erase || self.eraser;
         if s.down || self.active.is_none() {
+            self.end_stroke();
             self.active = Some(Stroke {
                 erase: erasing,
                 pts: Vec::new(),
@@ -254,14 +313,14 @@ impl Whiteboard {
         // Confine to the card region; leaving it breaks the current segment.
         if !in_card(s.y) {
             self.last = None;
-            return;
+            return None;
         }
         let x = s.x.clamp(0, (WIDTH - 1) as i32);
         let y = s.y;
         let r = if erasing {
             ERASE_RADIUS
         } else {
-            ((s.w as i32) / 2).max(1)
+            ((self.weight.width(s.w) as i32) / 2).max(1)
         };
         let (fx, fy) = self.last.unwrap_or((x, y));
 
@@ -274,29 +333,6 @@ impl Whiteboard {
         maxx = (maxx + pad).min((WIDTH - 1) as i32);
         maxy = (maxy + pad).min((CARD_Y + CARD_H - 1) as i32);
 
-        // 2. recompute the framebuffer over that bbox from base+ink (no refresh).
-        {
-            let shm: &mut [u8] = &mut *qtfb.shm;
-            for yy in miny..=maxy {
-                for xx in minx..=maxx {
-                    let idx = yy as usize * WIDTH + xx as usize;
-                    let bi = idx * 4;
-                    let di = idx * 3;
-                    let cov = self.ink[idx] as u32;
-                    if cov == 0 {
-                        shm[di] = self.base[bi];
-                        shm[di + 1] = self.base[bi + 1];
-                        shm[di + 2] = self.base[bi + 2];
-                    } else {
-                        let ia = 255 - cov;
-                        for k in 0..3 {
-                            shm[di + k] = ((self.base[bi + k] as u32 * ia) / 255) as u8;
-                        }
-                    }
-                }
-            }
-        }
-
         // 3. record the point in content CSS coords (so ink scrolls AND zooms with
         // the card). Erase strokes record too — with the effective eraser width —
         // so both view rebuilds and undo replay them faithfully.
@@ -307,7 +343,7 @@ impl Whiteboard {
             let wpanel = if erasing {
                 (ERASE_RADIUS * 2) as f32
             } else {
-                s.w as f32
+                self.weight.width(s.w) as f32
             };
             let wrec = (wpanel / zoom).max(1.0) as u8;
             if let Some(st) = self.active.as_mut() {
@@ -321,6 +357,7 @@ impl Whiteboard {
                 (dx0.min(minx), dy0.min(miny), dx1.max(maxx), dy1.max(maxy))
             }
         });
+        Some((minx, miny, maxx, maxy))
     }
 
     /// Push one coalesced fast (DU) partial refresh over everything inked since the
@@ -330,10 +367,8 @@ impl Whiteboard {
     /// the marker event buffer back up) and rate-limits refreshes to panel speed.
     pub fn flush_ink(&mut self, qtfb: &mut Qtfb) {
         if let Some((x0, y0, x1, y1)) = self.dirty {
-            // A2 waveform for ink — far lower perceived latency than DU. Mode is
-            // only actually sent when it changes (see Qtfb), so a continuous stroke
-            // stays in A2 with no per-flush mode messages.
-            let _ = qtfb.try_set_refresh_mode(REFRESH_MODE_ANIMATE);
+            // Native monochrome writing mode; only the accumulated ink region is refreshed.
+            let _ = qtfb.try_set_refresh_mode(REFRESH_MODE_UFAST);
             if qtfb
                 .try_update_partial(x0, y0, x1 - x0 + 1, y1 - y0 + 1)
                 .is_ok()
@@ -391,5 +426,90 @@ fn segment_ink(ink: &mut [u8], x0: i32, y0: i32, x1: i32, y1: i32, r: i32, erase
         let x = x0 + (x1 - x0) * i / steps;
         let y = y0 + (y1 - y0) * i / steps;
         stamp(ink, x, y, r, erase);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn draw(wb: &mut Whiteboard, x: i32) {
+        let s = PenSample {
+            x,
+            y: CARD_Y as i32 + 100,
+            w: 3,
+            down: true,
+            up: false,
+            erase: false,
+        };
+        wb.record_sample(s);
+        wb.record_sample(PenSample {
+            x: x + 30,
+            down: false,
+            ..s
+        });
+        wb.record_sample(PenSample {
+            down: false,
+            up: true,
+            ..s
+        });
+    }
+
+    #[test]
+    fn ink_undo_redo_and_clear_are_reversible_without_touching_reviews() {
+        let mut wb = Whiteboard::new();
+        draw(&mut wb, 100);
+        let first = wb.ink.clone();
+        draw(&mut wb, 300);
+        let second = wb.ink.clone();
+        assert!(wb.undo_edit());
+        assert_eq!(wb.ink, first);
+        assert!(wb.redo_edit());
+        assert_eq!(wb.ink, second);
+        wb.clear_edit();
+        assert!(wb.ink.iter().all(|&v| v == 0));
+        assert!(wb.undo_edit());
+        assert_eq!(wb.ink, second);
+        assert!(wb.redo_edit());
+        assert!(wb.ink.iter().all(|&v| v == 0));
+    }
+
+    #[test]
+    fn new_writing_discards_redo_and_new_cards_start_fresh() {
+        let mut wb = Whiteboard::new();
+        draw(&mut wb, 100);
+        assert!(wb.undo_edit());
+        draw(&mut wb, 200);
+        assert!(!wb.redo_edit());
+        wb.clear_ink();
+        assert!(!wb.undo_edit());
+        assert!(!wb.redo_edit());
+    }
+
+    #[test]
+    fn eraser_undo_restores_ink_and_bold_strokes_survive_replay() {
+        let mut wb = Whiteboard::new();
+        wb.weight = PenWeight::Bold;
+        draw(&mut wb, 100);
+        let original = wb.ink.clone();
+        wb.rebuild_ink();
+        assert_eq!(wb.ink, original);
+        let s = PenSample {
+            x: 110,
+            y: CARD_Y as i32 + 100,
+            w: 3,
+            down: true,
+            up: false,
+            erase: true,
+        };
+        wb.record_sample(s);
+        wb.record_sample(PenSample {
+            down: false,
+            up: true,
+            ..s
+        });
+        assert_ne!(wb.ink, original);
+        wb.undo_edit();
+        assert_eq!(wb.ink, original);
     }
 }

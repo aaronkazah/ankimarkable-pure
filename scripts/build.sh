@@ -30,13 +30,13 @@ verify "$stage/tinyxml.tar.gz" 3bdf15128ba16686e69bce256cc468e76c7b94ff2c7f391cc
 tar -xzf "$stage/microtex.tar.gz" -C "$stage"
 tar -xzf "$stage/tinyxml.tar.gz" -C "$stage"
 mkdir "$stage/math"
-docker run --rm --platform linux/arm64 -v "$root/tools/mathpng:/source:ro" \
+docker run --rm --platform linux/arm64 --user "$(id -u):$(id -g)" -v "$root/tools/mathpng:/source:ro" \
   -v "$stage/MicroTeX-0e3707f6dafebb121d98b53c64364d16fefe481d:/microtex:ro" \
   -v "$stage/tinyxml2-10.0.0:/tinyxml:ro" -v "$stage/math:/out" "$math_image" bash /source/build.sh
 
 bundle="$root/dist/ankimarkable-pure"
 mkdir -p "$bundle/licenses"
-docker run --rm --platform linux/arm64 -v ankimarkable-pure-build:/build -v "$bundle:/out" \
+docker run --rm --platform linux/arm64 --user "$(id -u):$(id -g)" -v ankimarkable-pure-build:/build:ro -v "$bundle:/out" \
   ankimarkable-pure-builder:1.95.0 sh -c 'cp /build/target/release/ankimarkable-pure /build/target/release/ankimarkable-pure-tools /out/'
 cp "$stage/math/mathpng" "$bundle/"
 rm -rf "$bundle/microtex-res"
@@ -45,6 +45,6 @@ cp -R "$root/assets/licenses/." "$bundle/licenses/"
 cp "$stage/math/MicroTeX-LICENSE" "$stage/math/tinyxml2-LICENSE.txt" "$bundle/licenses/"
 cp "$root/packaging/external.manifest.json" "$root/assets/icon.png" "$root/LICENSE" "$root/README.md" "$bundle/"
 cp -R "$root/scripts" "$bundle/"
-tar -C "$root/dist" -czf "$root/dist/ankimarkable-pure-0.1.0-paper-pure.tar.gz" ankimarkable-pure
-(cd "$root/dist" && if command -v sha256sum >/dev/null; then sha256sum ankimarkable-pure-0.1.0-paper-pure.tar.gz; else shasum -a 256 ankimarkable-pure-0.1.0-paper-pure.tar.gz; fi) > "$root/dist/SHA256SUMS"
-printf '\nInstallable package: %s\n' "$root/dist/ankimarkable-pure-0.1.0-paper-pure.tar.gz"
+tar -C "$root/dist" -czf "$root/dist/ankimarkable-pure-0.2.0-paper-pure.tar.gz" ankimarkable-pure
+(cd "$root/dist" && if command -v sha256sum >/dev/null; then sha256sum ankimarkable-pure-0.2.0-paper-pure.tar.gz; else shasum -a 256 ankimarkable-pure-0.2.0-paper-pure.tar.gz; fi) > "$root/dist/SHA256SUMS"
+printf '\nInstallable package: %s\n' "$root/dist/ankimarkable-pure-0.2.0-paper-pure.tar.gz"

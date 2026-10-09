@@ -42,6 +42,18 @@ const F_NERD: &[u8] = include_bytes!("../assets/fonts/SymbolsNerdFontMono-Regula
 // that cards use as literal unicode in prose. Without it those show tofu boxes.
 const F_XITS: &[u8] = include_bytes!("../assets/fonts/XITSMath-Regular.otf");
 
+// Blitz 0.2's clipping counters are process-global, so painting must be serialized.
+static PAINT_LOCK: Mutex<()> = Mutex::new(());
+
+fn paint_document(document: &HtmlDocument, scale: f64, width: u32, height: u32) -> Vec<u8> {
+    let _paint = PAINT_LOCK.lock().unwrap();
+    render_to_buffer::<VelloCpuImageRenderer, _>(
+        |scene| paint_scene(scene, document.as_ref(), scale, width, height),
+        width,
+        height,
+    )
+}
+
 pub struct Renderer {
     font_ctx: FontContext,
     media_dir: Option<PathBuf>,
@@ -114,20 +126,12 @@ impl Renderer {
     /// bytes (row-major). Background comes from the HTML body's CSS.
     pub fn render_rgba(&self, html: &str, width: u32, height: u32) -> Vec<u8> {
         let document = self.build_document(html, width, height);
-        render_to_buffer::<VelloCpuImageRenderer, _>(
-            |scene| paint_scene(scene, document.as_ref(), 1.0, width, height),
-            width,
-            height,
-        )
+        paint_document(&document, 1.0, width, height)
     }
 
     /// Build a LIVE card view for the scrollable/zoomable card region: the document
     /// stays resident so scrolling is a repaint (no re-layout) and zoom is a real
     /// reflow (text re-wraps to the card width at the new scale).
-    pub fn build_card_view(&self, html: &str, width: u32, height: u32) -> CardView {
-        self.build_card_view_at(html, width, height, 0)
-    }
-
     /// `build_card_view` laid out directly at `ZOOM_STEPS[zoom_idx]` — the
     /// persisted zoom preference, so every card opens at the level you last
     /// pinched to instead of snapping back to 1.0×.
@@ -137,15 +141,19 @@ impl Renderer {
         width: u32,
         height: u32,
         zoom_idx: usize,
+        bold_text: bool,
     ) -> CardView {
-        let doc = self.build_document(html, width, height);
+        let mut paper_html = format!("{html}<style>html,body,.card{{background:#fff!important;color:#000!important;}}</style>");
+        if bold_text {
+            paper_html.push_str("<style>body,.card,.card *{font-weight:700!important;}</style>");
+        }
+        let doc = self.build_document(&paper_html, width, height);
         let mut view = CardView {
             doc,
             width,
             height,
             zoom_idx: 0,
         };
-        view.refresh_content_size();
         let zoom_idx = zoom_idx.min(ZOOM_STEPS.len() - 1);
         if zoom_idx != 0 {
             view.apply_zoom(zoom_idx, 0.0);
@@ -204,11 +212,6 @@ impl CardView {
         (self.content_h() - self.height as f64).max(0.0)
     }
 
-    fn refresh_content_size(&mut self) {
-        // Nothing cached currently — content_h reads the live layout — but keep the
-        // hook so a future cached-tall-buffer optimization has one place to land.
-    }
-
     /// Scroll by `dy` physical px (positive = further down the card). Returns true
     /// if the offset actually changed (clamped at the ends).
     pub fn scroll_by(&mut self, dy: f64) -> bool {
@@ -252,11 +255,7 @@ impl CardView {
     /// Paint the current window (width×height at the current scroll/zoom) to RGBA.
     pub fn paint_window(&self) -> Vec<u8> {
         let scale = self.doc.viewport().scale() as f64;
-        render_to_buffer::<VelloCpuImageRenderer, _>(
-            |scene| paint_scene(scene, self.doc.as_ref(), scale, self.width, self.height),
-            self.width,
-            self.height,
-        )
+        paint_document(&self.doc, scale, self.width, self.height)
     }
 }
 
@@ -519,4 +518,34 @@ fn base64_decode(s: &str) -> Option<Vec<u8>> {
         }
     }
     Some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bold_card_text_has_heavier_ink_without_changing_to_a_dark_background() {
+        let renderer = Renderer::new();
+        let html = "<html><head><style>.card{font-family:Arial;font-size:48px;margin:0;background:#333;color:white;}</style></head><body class='card'>Read this answer</body></html>";
+        let regular = renderer
+            .build_card_view_at(html, 700, 120, 0, false)
+            .paint_window();
+        let bold = renderer
+            .build_card_view_at(html, 700, 120, 0, true)
+            .paint_window();
+        let coverage = |p: &[u8]| p.chunks_exact(4).map(|p| 255u64 - p[0] as u64).sum::<u64>();
+        assert!(coverage(&bold) > coverage(&regular) * 110 / 100);
+        assert_eq!(&bold[bold.len() - 4..], &[255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn simultaneous_clipped_renders_produce_identical_frames() {
+        let render = || {
+            Renderer::new().render_rgba("<body style='margin:0'><div style='width:100px;height:50px;overflow:hidden;background:white;color:black'>Clipped text</div></body>", 200, 100)
+        };
+        let left = std::thread::spawn(render);
+        let right = std::thread::spawn(render);
+        assert_eq!(left.join().unwrap(), right.join().unwrap());
+    }
 }

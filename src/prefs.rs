@@ -3,16 +3,23 @@
 use std::io::Write;
 use std::path::Path;
 
+use crate::pen::PenWeight;
 use crate::render::ZOOM_STEPS;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Prefs {
     pub zoom_idx: usize,
+    pub pen_weight: PenWeight,
+    pub bold_text: bool,
 }
 
 impl Default for Prefs {
     fn default() -> Self {
-        Prefs { zoom_idx: 0 }
+        Prefs {
+            zoom_idx: 0,
+            pen_weight: PenWeight::Medium,
+            bold_text: false,
+        }
     }
 }
 
@@ -43,6 +50,10 @@ impl Prefs {
                         p.zoom_idx = i.min(ZOOM_STEPS.len() - 1);
                     }
                 }
+                ("pen_weight", "thin") => p.pen_weight = PenWeight::Thin,
+                ("pen_weight", "medium") => p.pen_weight = PenWeight::Medium,
+                ("pen_weight", "bold") => p.pen_weight = PenWeight::Bold,
+                ("bold_text", "true") => p.bold_text = true,
                 _ => {}
             }
         }
@@ -50,7 +61,15 @@ impl Prefs {
     }
 
     fn serialize(&self) -> String {
-        format!("zoom_idx={}\n", self.zoom_idx)
+        let weight = match self.pen_weight {
+            PenWeight::Thin => "thin",
+            PenWeight::Medium => "medium",
+            PenWeight::Bold => "bold",
+        };
+        format!(
+            "zoom_idx={}\npen_weight={weight}\nbold_text={}\n",
+            self.zoom_idx, self.bold_text
+        )
     }
 
     /// Atomically write prefs to `path` (temp file in the same dir + rename).
@@ -89,7 +108,11 @@ mod tests {
         let path = dir.join("prefs");
         // Missing file → defaults.
         assert_eq!(Prefs::load(&path), Prefs::default());
-        let p = Prefs { zoom_idx: 2 };
+        let p = Prefs {
+            zoom_idx: 2,
+            pen_weight: PenWeight::Bold,
+            bold_text: true,
+        };
         p.save(&path).unwrap();
         assert_eq!(Prefs::load(&path), p);
         // Garbage / out-of-range values degrade gracefully.

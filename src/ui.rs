@@ -7,22 +7,32 @@
 //! in Rust to match the geometry of the HTML we generate.
 
 use crate::backend::{CardKind, Counts, DeckInfo, Grade, ReviewCard, Stats};
+use crate::pen::PenWeight;
+use crate::prefs::Prefs;
 use crate::qtfb::{Qtfb, REFRESH_MODE_CONTENT};
 use crate::render::Renderer;
 
 pub use crate::device::{PANEL_HEIGHT as HEIGHT, PANEL_WIDTH as WIDTH};
-pub const TOP_H: usize = 110;
-pub const BOTTOM_H: usize = 240;
+pub const NAV_H: usize = 110;
+pub const TOP_H: usize = NAV_H * 2;
+pub const BOTTOM_H: usize = 180;
 pub const CARD_Y: usize = TOP_H;
 pub const CARD_H: usize = HEIGHT - TOP_H - BOTTOM_H;
 
-// Review top-bar buttons, right-to-left: [counts][Home][Undo][Eraser][Clear][Sync][Exit].
-const HOME_W: usize = 140;
-const UNDO_W: usize = 140;
-const ERASE_W: usize = 150;
-const CLEAR_W: usize = 140;
+const HOME_W: usize = 160;
 const SYNC_W: usize = 150;
 const EXIT_W: usize = 140;
+
+const TOOLS: [(Hit, &str, usize); 8] = [
+    (Hit::PenWeight(PenWeight::Thin), "Thin", 164),
+    (Hit::PenWeight(PenWeight::Medium), "Medium", 188),
+    (Hit::PenWeight(PenWeight::Bold), "Bold", 164),
+    (Hit::EraserToggle, "Eraser", 180),
+    (Hit::Undo, "Undo", 164),
+    (Hit::Redo, "Redo", 164),
+    (Hit::Clear, "Clear", 160),
+    (Hit::TextWeightToggle, "Bold text", 220),
+];
 
 // ⋮ overflow menu: a floating button in the card's bottom-right corner, with a
 // popup panel above it (root actions, or the Flag… submenu).
@@ -39,18 +49,18 @@ pub enum MenuState {
     Flags,
 }
 
-/// Anki's seven card flags: (flag number, name, swatch colour). Single source of
+/// Anki's seven card flags: (flag number, name). Single source of
 /// truth — BOTH the Flags panel's HTML rows and hit_menu's row indices derive
 /// from this table (in this order), so the drawn rows and the hit-test rows
 /// cannot drift.
-const FLAGS: [(u32, &str, &str); 7] = [
-    (1, "Red", "#d32f2f"),
-    (2, "Orange", "#f57c00"),
-    (3, "Green", "#388e3c"),
-    (4, "Blue", "#1976d2"),
-    (5, "Pink", "#e91e63"),
-    (6, "Turquoise", "#00bcd4"),
-    (7, "Purple", "#7b1fa2"),
+const FLAGS: [(u32, &str); 7] = [
+    (1, "Red"),
+    (2, "Orange"),
+    (3, "Green"),
+    (4, "Blue"),
+    (5, "Pink"),
+    (6, "Turquoise"),
+    (7, "Purple"),
 ];
 
 /// Rows in the panel for a given state. Root: Flag… / Bury card / Suspend note.
@@ -58,7 +68,7 @@ const FLAGS: [(u32, &str, &str); 7] = [
 fn menu_items(state: MenuState) -> usize {
     match state {
         MenuState::Closed => 0,
-        MenuState::Root => 3,
+        MenuState::Root => 4,
         MenuState::Flags => FLAGS.len() + 1,
     }
 }
@@ -76,8 +86,6 @@ fn menu_panel_rect(items: usize) -> (usize, usize, usize, usize) {
     let x1 = bx1;
     let x0 = x1 - MENU_PANEL_W;
     let y1 = by0 - 14;
-    // Even the tallest panel (8 × 118px = 944px) starts at y0 = 828, well below
-    // CARD_Y (110) — it always fits inside the card band above the anchor.
     let y0 = y1 - MENU_ITEM_H * items;
     (x0, y0, x1, y1)
 }
@@ -99,6 +107,7 @@ pub fn hit_menu(x: i32, y: i32, state: MenuState) -> MenuHit {
                 0 => MenuHit::OpenFlags,
                 1 => MenuHit::Bury,
                 2 => MenuHit::Suspend,
+                3 => MenuHit::UndoReview,
                 _ => MenuHit::None,
             },
             // Same order as draw_menu_panel: the FLAGS rows, then Remove flag.
@@ -120,7 +129,7 @@ const HOME_CHEV_W: usize = 84; // chevron tap zone width (after indent)
 const SCROLL_BTN_W: usize = 88; // ▲/▼ header buttons
 /// Visible deck rows that fit under the header.
 pub fn home_page_rows() -> usize {
-    (HEIGHT - TOP_H) / HOME_ROW_H
+    (HEIGHT - NAV_H - HOME_ROW_H) / HOME_ROW_H
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -137,6 +146,9 @@ pub enum Hit {
     Exit,
     Home,
     Undo,
+    Redo,
+    PenWeight(PenWeight),
+    TextWeightToggle,
     Clear,
     EraserToggle,
     /// The ⋮ overflow button (bottom-right) was tapped.
@@ -151,6 +163,7 @@ pub enum MenuHit {
     OpenFlags,
     Bury,
     Suspend,
+    UndoReview,
     /// A flags-submenu row: 1-7 sets that flag, 0 = "Remove flag".
     Flag(u32),
     /// Tapped outside the panel — dismiss it.
@@ -172,14 +185,15 @@ pub enum HomeHit {
 
 /// Map a touch in physical panel coords to a UI action for the current phase.
 pub fn hit_test(x: i32, y: i32, phase: Phase) -> Hit {
-    if x < 0 || y < 0 {
+    if x < 0 || y < 0 || x >= WIDTH as i32 || y >= HEIGHT as i32 {
         return Hit::None;
     }
     let (x, y) = (x as usize, y as usize);
 
-    // Top status bar: [counts .... Home | Undo | Eraser | Clear | Sync | Exit]
-    // (right-to-left, must mirror top_bar_html's button order).
-    if y < TOP_H {
+    if y < NAV_H {
+        if x < HOME_W {
+            return Hit::Home;
+        }
         let mut edge = WIDTH;
         edge -= EXIT_W;
         if x >= edge {
@@ -189,24 +203,18 @@ pub fn hit_test(x: i32, y: i32, phase: Phase) -> Hit {
         if x >= edge {
             return Hit::Sync;
         }
-        edge -= CLEAR_W;
-        if x >= edge {
-            return Hit::Clear;
+        // Counts and the deck name are informational.
+        return Hit::None;
+    }
+
+    if y < TOP_H {
+        let mut edge = 0;
+        for (hit, _, width) in TOOLS {
+            edge += width;
+            if x < edge {
+                return hit;
+            }
         }
-        edge -= ERASE_W;
-        if x >= edge {
-            return Hit::EraserToggle;
-        }
-        edge -= UNDO_W;
-        if x >= edge {
-            return Hit::Undo;
-        }
-        edge -= HOME_W;
-        if x >= edge {
-            return Hit::Home;
-        }
-        // Everything left of the buttons is the counts / status area — tap it to
-        // Counts are informational.
         return Hit::None;
     }
 
@@ -264,6 +272,7 @@ pub fn compose_review(
     counts: Counts,
     status: &str,
     eraser: bool,
+    prefs: &Prefs,
     menu: MenuState,
 ) -> Vec<u8> {
     let mut fb = vec![255u8; WIDTH * HEIGHT * 4];
@@ -271,7 +280,7 @@ pub fn compose_review(
     blit(&mut fb, card_window, WIDTH, CARD_H, 0, CARD_Y);
 
     let top_buf = renderer.render_rgba(
-        &top_bar_html(counts, Some(card.kind), status, eraser),
+        &top_bar_html(counts, Some(card.kind), status, eraser, prefs),
         WIDTH as u32,
         TOP_H as u32,
     );
@@ -356,20 +365,15 @@ fn desaturate(buf: &mut [u8]) {
 /// The floating ⋮ button in the card's bottom-right corner.
 fn draw_menu_button(fb: &mut [u8], renderer: &Renderer) {
     let (x0, y0, _, _) = menu_btn_rect();
-    let html = format!(
-        "<!DOCTYPE html><html><head><style>body{{margin:0;padding:0;}}\
-         .m{{width:{n}px;height:{n}px;background:#37474f;color:#fff;box-sizing:border-box;\
-         display:flex;align-items:center;justify-content:center;\
-         font-size:82px;font-weight:700;border-radius:18px;}}</style></head>\
-         <body><div class=\"m\">\u{22EE}</div></body></html>",
-        n = MENU_BTN
-    );
+    let html = chrome_page(&format!(
+        r#"<div class="flex items-center justify-center bg-white text-black border-[3px] border-black text-[30px] font-bold box-border" style="width:{MENU_BTN}px;height:{MENU_BTN}px;">More</div>"#
+    ));
     let buf = renderer.render_rgba(&html, MENU_BTN as u32, MENU_BTN as u32);
     blit(fb, &buf, MENU_BTN, MENU_BTN, x0, y0);
 }
 
 /// The popup panel above the ⋮ button. Root: Flag… / Bury card / Suspend note;
-/// Flags: one row per `FLAGS` entry (colour swatch + "{n} {Name}", ✓ + bold on
+/// Flags: one labeled row per `FLAGS` entry, with a check on
 /// the current flag) then "Remove flag". Row ORDER must match `hit_menu` — both
 /// are generated from the same `FLAGS` table.
 fn draw_menu_panel(fb: &mut [u8], renderer: &Renderer, state: MenuState, current_flag: u8) {
@@ -379,84 +383,35 @@ fn draw_menu_panel(fb: &mut [u8], renderer: &Renderer, state: MenuState, current
     }
     let (x0, y0, x1, y1) = menu_panel_rect(items);
     let (w, h) = (x1 - x0, y1 - y0);
-    let mut rows = String::new();
-    match state {
+    let labels: Vec<String> = match state {
         MenuState::Closed => return,
-        MenuState::Root => {
-            // Surface the current flag on the submenu row so you can see the
-            // card's flag without opening it.
-            let flag_row = match FLAGS.iter().find(|f| f.0 == current_flag as u32) {
-                Some((_, name, _)) => format!("Flag\u{2026} ({name}) \u{25B8}"),
-                None => "Flag\u{2026} \u{25B8}".to_string(),
-            };
-            rows.push_str(&format!("<div class=\"it sep\">{flag_row}</div>"));
-            rows.push_str("<div class=\"it sep\">Bury card</div>");
-            rows.push_str("<div class=\"it\">Suspend note</div>");
-        }
-        MenuState::Flags => {
-            for &(n, name, hex) in FLAGS.iter() {
-                let (cur, tick) = if n == current_flag as u32 {
-                    (" cur", " \u{2713}")
-                } else {
-                    ("", "")
-                };
-                rows.push_str(&format!(
-                    "<div class=\"it sep{cur}\"><span class=\"sw\" \
-                     style=\"background:{hex};\"></span>{n} {name}{tick}</div>"
-                ));
-            }
-            rows.push_str("<div class=\"it\">Remove flag</div>");
-        }
-    }
-    let html = format!(
-        "<!DOCTYPE html><html><head><style>body{{margin:0;padding:0;}}\
-         .p{{width:{w}px;height:{h}px;background:#fff;border:3px solid #333;box-sizing:border-box;}}\
-         .it{{height:{ih}px;display:flex;align-items:center;padding-left:36px;\
-         font-size:46px;color:#111;box-sizing:border-box;}}\
-         .sep{{border-bottom:2px solid #cccccc;}}\
-         .cur{{font-weight:700;}}\
-         .sw{{display:inline-block;width:34px;height:34px;flex:none;\
-         border:2px solid #888;margin-right:26px;}}</style></head>\
-         <body><div class=\"p\">{rows}</div></body></html>",
-        w = w,
-        h = h,
-        ih = MENU_ITEM_H,
-        rows = rows,
-    );
+        MenuState::Root => vec![
+            "Flag card ›".into(),
+            "Bury card".into(),
+            "Suspend note".into(),
+            "Undo last review".into(),
+        ],
+        MenuState::Flags => FLAGS
+            .iter()
+            .map(|(n, name)| {
+                format!(
+                    "{} {n} {name}",
+                    if *n == current_flag as u32 { "✓" } else { "" }
+                )
+            })
+            .chain(std::iter::once("Remove flag".into()))
+            .collect(),
+    };
+    let rows = labels.iter().map(|label| format!(r#"<div class="flex items-center px-[32px] border-b-[2px] border-black text-[38px] font-bold box-border" style="height:{MENU_ITEM_H}px;">{}</div>"#, esc(label))).collect::<String>();
+    let html = chrome_page(&format!(
+        r#"<div class="bg-white border-[3px] border-black box-border" style="width:{w}px;height:{h}px;">{rows}</div>"#
+    ));
     let buf = renderer.render_rgba(&html, w as u32, h as u32);
     blit(fb, &buf, w, h, x0, y0);
 }
 
 /// Composite + push a full review frame (renders the card window itself at
 /// scroll 0 / zoom 1 — the app's live path goes through `main::redraw` instead).
-pub fn draw_review(
-    qtfb: &mut Qtfb,
-    renderer: &Renderer,
-    card: &ReviewCard,
-    phase: Phase,
-    counts: Counts,
-    status: &str,
-    eraser: bool,
-) {
-    let html = match phase {
-        Phase::Question => &card.question_html,
-        Phase::Answer => &card.answer_html,
-    };
-    let window = renderer.render_rgba(html, WIDTH as u32, CARD_H as u32);
-    let fb = compose_review(
-        renderer,
-        &window,
-        card,
-        phase,
-        counts,
-        status,
-        eraser,
-        MenuState::Closed,
-    );
-    qtfb.blit_rgba(&fb, WIDTH, HEIGHT, 0, 0);
-    let _ = qtfb.set_refresh_mode(REFRESH_MODE_CONTENT);
-    let _ = qtfb.update_full();
-}
 
 /// The Review screen with no due card ("All done" / an empty deck): the top menu
 /// bar (so Home / Sync / Exit still work) + a centred message filling the rest.
@@ -469,22 +424,16 @@ pub fn compose_review_empty(
 ) -> Vec<u8> {
     let mut fb = vec![255u8; WIDTH * HEIGHT * 4];
     let area_h = HEIGHT - TOP_H;
-    let html = format!(
-        "<!DOCTYPE html><html><head><style>\
-         body{{margin:0;padding:0 120px;box-sizing:border-box;font-family:sans-serif;\
-         color:#111;background:#fff;height:{ah}px;display:flex;flex-direction:column;\
-         align-items:center;justify-content:center;text-align:center;}}\
-         .t{{font-size:60px;font-weight:700;margin-bottom:24px;}}\
-         .b{{font-size:34px;color:#444;line-height:1.5;max-width:1100px;}}</style></head>\
-         <body><div class=\"t\">{}</div><div class=\"b\">{}</div></body></html>",
+    let html = chrome_page(&format!(
+        r#"<div class="flex flex-col items-center justify-center text-center px-[120px] box-border" style="height:{area_h}px;">
+        <div class="text-[60px] font-bold mb-[24px]">{}</div><div class="text-[34px] leading-normal max-w-[1100px]">{}</div></div>"#,
         esc(title),
-        esc(body),
-        ah = area_h
-    );
+        esc(body)
+    ));
     let area = renderer.render_rgba(&html, WIDTH as u32, area_h as u32);
     blit(&mut fb, &area, WIDTH, area_h, 0, TOP_H);
     let top = renderer.render_rgba(
-        &top_bar_html(counts, None, status, false),
+        &top_bar_html(counts, None, status, false, &Prefs::default()),
         WIDTH as u32,
         TOP_H as u32,
     );
@@ -495,30 +444,24 @@ pub fn compose_review_empty(
 
 /// Full-screen message (congrats / errors) into a fresh RGBA buffer.
 pub fn compose_message(renderer: &Renderer, title: &str, body: &str) -> Vec<u8> {
-    let html = format!(
-        "<!DOCTYPE html><html><head><style>\
-         body{{font-family:sans-serif;margin:0;padding:0 120px;box-sizing:border-box;\
-         color:#111;background:#fff;text-align:center;\
-         display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;}}\
-         .t{{font-size:64px;font-weight:700;margin-bottom:28px;}}\
-         .b{{font-size:36px;color:#444;line-height:1.5;max-width:1100px;}}</style></head>\
-         <body><div class=\"t\">{}</div><div class=\"b\">{}</div></body></html>",
+    let html = chrome_page(&format!(
+        r#"<div class="flex flex-col items-center justify-center text-center px-[120px] box-border" style="height:{HEIGHT}px;">
+        <div class="text-[64px] font-bold mb-[28px]">{}</div>
+        <div class="text-[36px] leading-normal max-w-[1100px]">{}</div></div>"#,
         esc(title),
-        // Callers pass multi-line bodies (e.g. the sync report); esc() keeps the
-        // '\n's literal, so turn them into <br> AFTER escaping.
-        esc(body).replace('\n', "<br>")
-    );
+        esc(body)
+    ));
     renderer.render_rgba(&html, WIDTH as u32, HEIGHT as u32)
 }
 
-/// Map a tap on the home screen to an action. `visible` is the collapse-filtered
-/// deck list; `scroll` is the first displayed row. Geometry must match `compose_home`.
+/// Deck selection and navigation share the exact painted row geometry.
+
 pub fn hit_test_home(x: i32, y: i32, visible: &[DeckInfo], scroll: usize) -> HomeHit {
-    if x < 0 || y < 0 {
+    if x < 0 || y < 0 || x >= WIDTH as i32 || y >= HEIGHT as i32 {
         return HomeHit::None;
     }
     let (x, y) = (x as usize, y as usize);
-    if y < TOP_H {
+    if y < NAV_H {
         let mut edge = WIDTH;
         edge -= EXIT_W;
         if x >= edge {
@@ -538,7 +481,10 @@ pub fn hit_test_home(x: i32, y: i32, visible: &[DeckInfo], scroll: usize) -> Hom
         }
         return HomeHit::None;
     }
-    let idx = scroll + (y - TOP_H) / HOME_ROW_H;
+    if y < NAV_H + HOME_ROW_H {
+        return HomeHit::None;
+    }
+    let idx = scroll + (y - NAV_H - HOME_ROW_H) / HOME_ROW_H;
     let Some(d) = visible.get(idx) else {
         return HomeHit::None;
     };
@@ -560,82 +506,36 @@ pub fn compose_home(
     scroll: usize,
     stats: Stats,
 ) -> Vec<u8> {
-    let chip = |v: u32, color: &str| {
-        if v == 0 {
-            "<span class=\"z\">0</span>".to_string()
-        } else {
-            format!("<span class=\"{color}\">{v}</span>")
-        }
-    };
     let fit = home_page_rows();
     let end = (scroll + fit).min(visible.len());
-    let mut rows = String::new();
-    for d in visible.get(scroll..end).unwrap_or(&[]) {
-        let cls = "row";
+    let rows = visible.get(scroll..end).unwrap_or(&[]).iter().map(|d| {
         let pad = HOME_PAD_L + d.level as usize * HOME_INDENT;
-        let chev = if !d.has_children {
-            ""
-        } else if d.collapsed {
-            "&#9656;" // ▸
-        } else {
-            "&#9662;" // ▾
-        };
-        rows.push_str(&format!(
-            "<div class=\"{cls}\" style=\"padding-left:{pad}px;\">\
-             <div class=\"chev\">{chev}</div><div class=\"nm\">{name}</div>\
-             <div class=\"chips\">{n}{l}{r}</div></div>",
-            name = esc(&d.name),
-            n = chip(d.new, "n"),
-            l = chip(d.learn, "l"),
-            r = chip(d.review, "r"),
-        ));
-    }
-    let more = if visible.len() > fit {
-        format!(
-            "<div class=\"pos\">{}\u{2013}{} / {}</div>",
-            (scroll + 1).min(visible.len().max(1)),
-            end,
-            visible.len()
-        )
-    } else {
-        String::new()
-    };
-    let html = format!(
-        "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><style>\
-         html,body{{margin:0;padding:0;background:#fff;color:#111;font-family:sans-serif;}}\
-         .top{{height:{top}px;display:flex;align-items:center;box-sizing:border-box;\
-         border-bottom:3px solid #000;}}\
-         .title{{font-size:44px;font-weight:800;padding-left:36px;}}\
-         .pos{{font-size:26px;color:#888;padding-left:20px;}} .sp{{flex:1;}}\
-         .streak{{font-size:30px;color:#555;padding-right:22px;white-space:nowrap;}}\
-         .btn{{font-size:34px;font-weight:700;color:#fff;height:{top}px;display:flex;\
-         align-items:center;justify-content:center;border-left:2px solid #fff;box-sizing:border-box;}}\
-         .up,.dn{{width:{scr}px;background:#607d8b;}}\
-         .sync{{width:{sync}px;background:#455a64;}} .exit{{width:{exit}px;background:#333;}}\
-         .row{{height:{rowh}px;display:flex;align-items:center;box-sizing:border-box;\
-         border-bottom:1px solid #dddddd;padding-right:40px;}}\
-         .chev{{width:{chevw}px;font-size:34px;color:#888;flex:none;}}\
-         .nm{{flex:1;font-size:40px;font-weight:600;overflow:hidden;white-space:nowrap;\
-         text-overflow:ellipsis;}}\
-         .chips{{font-size:32px;font-weight:700;white-space:nowrap;}}\
-         .chips span{{margin-left:32px;display:inline-block;min-width:1.1em;text-align:right;}}\
-         .n{{color:#1565c0;}} .l{{color:#c62828;}} .r{{color:#2e7d32;}} .z{{color:#c8c8c8;}}</style></head>\
-         <body><div class=\"top\"><div class=\"title\">Decks</div>{more}<div class=\"sp\"></div>\
-         <div class=\"streak\">&#128293; {streak} day streak &#183; {today} today</div>\
-         <div class=\"btn up\">&#9650;</div><div class=\"btn dn\">&#9660;</div>\
-         <div class=\"btn sync\">Sync</div><div class=\"btn exit\">Exit</div></div>\
-         {rows}</body></html>",
-        top = TOP_H,
-        scr = SCROLL_BTN_W,
-        sync = SYNC_W,
-        exit = EXIT_W,
-        rowh = HOME_ROW_H,
-        chevw = HOME_CHEV_W,
-        more = more,
-        streak = stats.streak,
-        today = stats.reviewed_today,
-        rows = rows,
-    );
+        let arrow = if !d.has_children { "" } else if d.collapsed { "›" } else { "⌄" };
+        format!(r#"<div class="flex items-center border-b-[2px] border-black box-border pr-[32px]" style="height:{HOME_ROW_H}px;padding-left:{pad}px;">
+            <div class="shrink-0 text-[40px] font-bold" style="width:{HOME_CHEV_W}px;">{arrow}</div>
+            <div class="flex-1 min-w-0 truncate text-[40px] font-bold">{}</div>
+            <div class="flex gap-[24px] text-[28px]"><span>New <b>{}</b></span><span>Learn <b>{}</b></span><span>Due <b>{}</b></span></div></div>"#, esc(&d.name), d.new, d.learn, d.review)
+    }).collect::<String>();
+    let controls = [
+        ("↑", SCROLL_BTN_W),
+        ("↓", SCROLL_BTN_W),
+        ("Sync", SYNC_W),
+        ("Close", EXIT_W),
+    ]
+    .iter()
+    .map(|(label, w)| nav_button(label, *w))
+    .collect::<String>();
+    let html = chrome_page(&format!(
+        r#"<div class="flex items-center border-b-[3px] border-black box-border" style="height:{NAV_H}px;">
+        <div class="text-[44px] font-bold pl-[32px]">Anki</div><div class="flex-1 text-[28px] pl-[24px]">{} reviewed today · {} day streak</div>{controls}</div>
+        <div class="flex items-center justify-between px-[32px] text-[28px] border-b-[2px] border-black box-border" style="height:{HOME_ROW_H}px;">
+        <b>Choose a deck to start writing</b><span>{}–{} / {}</span></div>{rows}"#,
+        stats.reviewed_today,
+        stats.streak,
+        (scroll + 1).min(visible.len()),
+        end,
+        visible.len()
+    ));
     renderer.render_rgba(&html, WIDTH as u32, HEIGHT as u32)
 }
 
@@ -710,105 +610,76 @@ fn hline_black(dst: &mut [u8], y: usize, thickness: usize) {
     }
 }
 
-fn top_bar_html(counts: Counts, kind: Option<CardKind>, status: &str, eraser: bool) -> String {
-    // Eraser button reflects its toggle state (inverted when active).
-    let (erase_bg, erase_fg) = if eraser {
-        ("#111", "#fff")
-    } else {
-        ("#e8e8e8", "#333")
-    };
-    // Underline the count that matches the current card (new/learning/review).
-    let cls = |k: CardKind, base: &str| {
-        if kind == Some(k) {
-            format!("{base} und")
-        } else {
-            base.to_string()
-        }
-    };
-    let (nc, lc, rc) = (
-        cls(CardKind::New, "n"),
-        cls(CardKind::Learning, "l"),
-        cls(CardKind::Review, "r"),
-    );
+const CHROME_CSS: &str = include_str!("../assets/ui.css");
+
+fn chrome_page(content: &str) -> String {
     format!(
-        "<!DOCTYPE html><html><head><style>\
-         body{{font-family:sans-serif;margin:0;padding:0;height:{top}px;color:#111;background:#fff;\
-         display:flex;align-items:center;}}\
-         .counts{{flex:1;display:flex;align-items:center;gap:26px;\
-         font-size:42px;padding-left:32px;}}\
-         .n{{color:#1565c0;font-weight:700;}} .l{{color:#c62828;font-weight:700;}} \
-         .r{{color:#2e7d32;font-weight:700;}} \
-         .und{{border-bottom:7px solid;}}\
-         .status{{font-size:24px;color:#666;padding-right:20px;\
-         overflow:hidden;text-overflow:ellipsis;max-width:560px;}}\
-         .btn{{font-size:30px;font-weight:700;text-align:center;color:#fff;\
-         height:{top}px;display:flex;align-items:center;justify-content:center;\
-         border-left:2px solid #fff;}}\
-         .home{{width:{home}px;background:#37474f;}}\
-         .undo{{width:{undo}px;background:#607d8b;}}\
-         .erase{{width:{erase}px;background:{erase_bg};color:{erase_fg};}}\
-         .clear{{width:{clear}px;background:#8d6e63;}}\
-         .sync{{width:{sync}px;background:#455a64;}} .exit{{width:{exit}px;background:#333;}}</style></head>\
-         <body><div class=\"counts\"><span class=\"{nc}\">{new}</span>\
-         <span class=\"{lc}\">{learn}</span><span class=\"{rc}\">{rev}</span></div>\
-         <div class=\"status\">{status}</div>\
-         <div class=\"btn home\">Home</div>\
-         <div class=\"btn undo\">Undo</div>\
-         <div class=\"btn erase\">Eraser</div>\
-         <div class=\"btn clear\">Clear</div>\
-         <div class=\"btn sync\">Sync</div><div class=\"btn exit\">Exit</div></body></html>",
-        top = TOP_H,
-        home = HOME_W,
-        undo = UNDO_W,
-        erase = ERASE_W,
-        clear = CLEAR_W,
-        sync = SYNC_W,
-        exit = EXIT_W,
-        new = counts.new,
-        learn = counts.learning,
-        rev = counts.review,
-        status = esc(status),
+        r#"<!DOCTYPE html><html><head><meta charset="utf-8"><style>{CHROME_CSS}</style></head><body class="m-0 bg-white text-black font-sans">{content}</body></html>"#
     )
 }
 
-fn bottom_bar_html(card: &ReviewCard, phase: Phase) -> String {
-    let head = format!(
-        "<!DOCTYPE html><html><head><style>\
-        html,body{{height:{height}px;}}\
-        body{{font-family:sans-serif;margin:0;padding:0;background:#fff;}}\
-        .row{{display:flex;height:{height}px;}}\
-        .cell{{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;\
-        border-left:2px solid #fff;}}\
-        .name{{font-size:40px;font-weight:700;color:#fff;}}\
-        .iv{{font-size:28px;color:#eee;margin-top:8px;}}\
-        .show{{display:flex;align-items:center;justify-content:center;height:{height}px;\
-        font-size:48px;font-weight:700;color:#fff;background:#1565c0;}}</style></head><body>",
-        height = BOTTOM_H
-    );
+fn nav_button(label: &str, width: usize) -> String {
+    format!(
+        r#"<div class="shrink-0 flex items-center justify-center border-l-[2px] border-black box-border text-[32px] font-bold" style="width:{width}px;height:{NAV_H}px;">{label}</div>"#
+    )
+}
 
-    match phase {
-        Phase::Question => {
-            format!("{head}<div class=\"show\">Show Answer</div></body></html>")
-        }
-        Phase::Answer => {
-            let cells = [
-                ("Again", "#c62828", &card.button_labels[0]),
-                ("Hard", "#ef6c00", &card.button_labels[1]),
-                ("Good", "#2e7d32", &card.button_labels[2]),
-                ("Easy", "#1565c0", &card.button_labels[3]),
-            ];
-            let mut s = format!("{head}<div class=\"row\">");
-            for (name, color, iv) in cells {
-                s.push_str(&format!(
-                    "<div class=\"cell\" style=\"background:{color};\">\
-                     <div class=\"name\">{name}</div><div class=\"iv\">{}</div></div>",
-                    esc(iv)
-                ));
+fn top_bar_html(
+    counts: Counts,
+    kind: Option<CardKind>,
+    status: &str,
+    eraser: bool,
+    prefs: &Prefs,
+) -> String {
+    let counts = [("New", counts.new, CardKind::New), ("Learn", counts.learning, CardKind::Learning), ("Due", counts.review, CardKind::Review)].iter().map(|(label, value, k)| {
+        let underline = if kind == Some(*k) { "border-b-[4px] border-black" } else { "" };
+        format!(r#"<div class="flex flex-col items-center text-[24px] px-[12px]"><span>{label}</span><b class="text-[36px] {underline}">{value}</b></div>"#)
+    }).collect::<String>();
+    let tools = TOOLS.iter().map(|(hit, label, width)| {
+        let selected = match hit {
+            Hit::PenWeight(w) => !eraser && *w == prefs.pen_weight,
+            Hit::EraserToggle => eraser,
+            Hit::TextWeightToggle => prefs.bold_text,
+            _ => false,
+        };
+        let colors = if selected { "bg-black text-white" } else { "bg-white text-black" };
+        let line = match hit {
+            Hit::PenWeight(w) => {
+                let thickness = match w { PenWeight::Thin => 2, PenWeight::Medium => 4, PenWeight::Bold => 8 };
+                let color = if selected { "white" } else { "black" };
+                format!(r#"<div class="w-[48px] mt-[12px]" style="border-top:{thickness}px solid {color};"></div>"#)
             }
-            s.push_str("</div></body></html>");
-            s
+            _ => String::new(),
+        };
+        format!(r#"<div class="flex flex-col items-center justify-center shrink-0 border-r-[2px] border-black box-border text-[30px] font-bold {colors}" style="width:{width}px;height:{NAV_H}px;"><div>{label}</div>{line}</div>"#)
+    }).collect::<String>();
+    chrome_page(&format!(
+        r#"<div class="flex items-center border-b-[2px] border-black box-border" style="height:{NAV_H}px;">
+        {}<div class="flex px-[20px]">{counts}</div><div class="flex-1 min-w-0 truncate text-[28px] px-[16px]">{}</div>{}{}</div>
+        <div class="flex border-b-[3px] border-black box-border" style="height:{NAV_H}px;">{tools}</div>"#,
+        nav_button("Decks", HOME_W),
+        esc(status),
+        nav_button("Sync", SYNC_W),
+        nav_button("Close", EXIT_W)
+    ))
+}
+
+fn bottom_bar_html(card: &ReviewCard, phase: Phase) -> String {
+    let content = match phase {
+        Phase::Question => format!(
+            r#"<div class="flex flex-col items-center justify-center bg-black text-white" style="height:{BOTTOM_H}px;">
+            <div class="text-[46px] font-bold">Reveal answer</div><div class="text-[26px] mt-[8px]">Your handwriting stays visible</div></div>"#
+        ),
+        Phase::Answer => {
+            let cells = [("Again", "Forgot", &card.button_labels[0]), ("Hard", "Struggled", &card.button_labels[1]), ("Good", "Remembered", &card.button_labels[2]), ("Easy", "Effortless", &card.button_labels[3])].iter().map(|(name, meaning, interval)| {
+                let colors = if *name == "Good" { "bg-black text-white" } else { "bg-white text-black" };
+                format!(r#"<div class="flex-1 flex flex-col items-center justify-center border-l-[3px] border-black box-border {colors}">
+                    <div class="text-[42px] font-bold">{name}</div><div class="text-[24px]">{meaning}</div><div class="text-[28px] font-bold mt-[6px]">{}</div></div>"#, esc(interval))
+            }).collect::<String>();
+            format!(r#"<div class="flex" style="height:{BOTTOM_H}px;">{cells}</div>"#)
         }
-    }
+    };
+    chrome_page(&content)
 }
 
 fn esc(s: &str) -> String {
@@ -839,7 +710,13 @@ mod tests {
                 BOTTOM_H as u32,
             );
             for x in [WIDTH / 8, WIDTH * 3 / 8, WIDTH * 5 / 8, WIDTH * 7 / 8] {
-                let index = ((BOTTOM_H - 4) * WIDTH + x) * 4;
+                let index = ((BOTTOM_H - 4) * WIDTH
+                    + if phase == Phase::Question {
+                        x
+                    } else {
+                        x / (WIDTH / 4) * (WIDTH / 4) + 1
+                    })
+                    * 4;
                 assert!(
                     pixels[index..index + 3].iter().any(|value| *value < 240),
                     "action area must be visible through its bottom edge"
@@ -848,5 +725,47 @@ mod tests {
         }
         drop(backend);
         std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn writing_tools_cover_the_toolbar_and_card_taps_never_reveal_answers() {
+        assert_eq!(TOOLS.iter().map(|t| t.2).sum::<usize>(), WIDTH);
+        let mut edge = 0;
+        for (expected, _, width) in TOOLS {
+            for x in [edge, edge + width / 2, edge + width - 1] {
+                assert_eq!(
+                    format!(
+                        "{:?}",
+                        hit_test(x as i32, NAV_H as i32 + 50, Phase::Question)
+                    ),
+                    format!("{expected:?}")
+                );
+            }
+            edge += width;
+        }
+        assert!(matches!(
+            hit_test(500, CARD_Y as i32 + 100, Phase::Question),
+            Hit::None
+        ));
+        assert!(matches!(
+            hit_test(WIDTH as i32, HEIGHT as i32, Phase::Question),
+            Hit::None
+        ));
+    }
+
+    #[test]
+    fn chrome_has_true_monochrome_pixels_and_visible_tool_selection() {
+        let renderer = Renderer::new();
+        let prefs = Prefs::default();
+        let pixels = renderer.render_rgba(
+            &top_bar_html(Counts::default(), None, "Sample deck", false, &prefs),
+            WIDTH as u32,
+            TOP_H as u32,
+        );
+        assert!(pixels.chunks_exact(4).all(|p| p[0] == p[1] && p[1] == p[2]));
+        let sample = |x: usize| pixels[((NAV_H + 5) * WIDTH + x) * 4];
+        assert_eq!(sample(10), 255);
+        assert_eq!(sample(174), 0);
+        assert_eq!(sample(362), 255);
     }
 }

@@ -1,5 +1,4 @@
-//! ankimarkable library — shared by the `ankimarkable` app binary and the
-//! headless screen test (`spike_screen`).
+//! Native Paper Pure reviews, rendering, and handwriting tools.
 
 pub mod backend;
 pub mod demo;
