@@ -12,6 +12,8 @@ The suite checks:
 - Current `.apkg` import/export preserving content and image files.
 - Deck/media download and review upload through Anki's real self-hosted sync server.
 
+The build also runs installer contracts in an isolated filesystem, verifying that a failed transfer leaves the previous executable intact and that a successful update preserves configuration and review data. Run `tests/installer_contract.py` in the math-builder container to repeat these checks independently.
+
 ## Device acceptance
 
 The port was exercised on Paper Pure firmware **3.28.0.172** and AppLoad **0.6.0**, in normal portrait. The tablet reported an Elan marker with X range 0–9620, Y range 0–13000, and pressure range 0–4096. The app discovers these ranges at runtime.

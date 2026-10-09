@@ -3,7 +3,7 @@ set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 host=${1:-root@10.11.99.1}
 bundle=${2:-$root/dist/ankimarkable-pure}
-ssh_options=(-o ConnectTimeout=10)
+ssh_options=(-o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=3)
 if [[ -n ${SSH_CONTROL_PATH:-} ]]; then ssh_options+=(-S "$SSH_CONTROL_PATH"); fi
 for file in ankimarkable-pure ankimarkable-pure-tools mathpng external.manifest.json icon.png LICENSE; do
   [[ -s "$bundle/$file" ]] || { printf 'Missing bundle file: %s\n' "$file" >&2; exit 1; }
@@ -19,17 +19,32 @@ for executable in /proc/[0-9]*/exe; do
     echo 'Close Anki before updating its application files.' >&2; exit 1
   fi
 done
-mkdir -p "$app" /home/root/.ankimarkable-pure
+mkdir -p /home/root/.ankimarkable-pure /home/root/.cache
 chmod 700 /home/root/.ankimarkable-pure
 REMOTE
-tar -C "$bundle" -cf - . | ssh "${ssh_options[@]}" "$host" 'tar -C /home/root/xovi/exthome/appload/ankimarkable-pure -xf -'
-ssh "${ssh_options[@]}" "$host" sh <<'REMOTE'
+stage=$(ssh "${ssh_options[@]}" "$host" 'umask 077; mktemp -d /home/root/.cache/ankimarkable-pure.XXXXXX')
+[[ "$stage" =~ ^/home/root/\.cache/ankimarkable-pure\.[[:alnum:]]{6}$ ]] || { echo 'Invalid staging directory.' >&2; exit 1; }
+tar -C "$bundle" -cf - . | ssh "${ssh_options[@]}" "$host" "tar -C '$stage' -xf -"
+ssh "${ssh_options[@]}" "$host" sh -s -- "$stage" <<'REMOTE'
 set -eu
+stage=$1
 app=/home/root/xovi/exthome/appload/ankimarkable-pure
-chmod 755 "$app/ankimarkable-pure" "$app/ankimarkable-pure-tools" "$app/mathpng"
-chown -R root:root "$app"
+for file in ankimarkable-pure ankimarkable-pure-tools mathpng external.manifest.json icon.png LICENSE; do
+  test -s "$stage/$file" || { echo "Incomplete transfer: $file" >&2; exit 1; }
+done
+if test -f "$app/external.manifest.json"; then cp "$app/external.manifest.json" "$stage/external.manifest.json"; fi
+chmod 755 "$stage/ankimarkable-pure" "$stage/ankimarkable-pure-tools" "$stage/mathpng"
+chown -R root:root "$stage"
 collection=/home/root/.ankimarkable-pure/collection.anki2
-if test ! -f "$collection"; then "$app/ankimarkable-pure-tools" create-demo "$collection"; fi
-"$app/ankimarkable-pure-tools" check "$collection"
+if test ! -f "$collection"; then "$stage/ankimarkable-pure-tools" create-demo "$collection"; fi
+"$stage/ankimarkable-pure-tools" check "$collection"
+mkdir -p /home/root/xovi/exthome/appload
+previous="$stage.previous"
+if test -d "$app"; then mv "$app" "$previous"; fi
+if ! mv "$stage" "$app"; then
+  test ! -d "$previous" || mv "$previous" "$app"
+  echo 'Could not activate the new application.' >&2; exit 1
+fi
+test ! -d "$previous" || rm -rf "$previous"
 echo 'Installed. Open AppLoad, then Anki — Paper Pure.'
 REMOTE

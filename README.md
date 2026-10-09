@@ -43,7 +43,7 @@ Install the application and ensure the launcher is running:
 
 Open the tablet sidebar → **AppLoad** → **Anki — Paper Pure**. Fresh installations include a separate demo deck with text, an image, math, and a cloze card. An Anki account is optional.
 
-Application files live under `/home/root/xovi/exthome/appload/ankimarkable-pure`. Cards and review progress live under `/home/root/.ankimarkable-pure`. Updates preserve the collection; close Anki before updating.
+Application files live under `/home/root/xovi/exthome/appload/ankimarkable-pure`. Cards and review progress live under `/home/root/.ankimarkable-pure`. Updates preserve the collection and your manifest configuration; close Anki before updating. The installer copies into a staging directory first, so an interrupted transfer leaves the previous app intact.
 
 Launcher configuration is temporary. After reboot, reMarkable starts its normal interface; run `scripts/start-launcher.sh` when you want AppLoad. This project does not flash firmware or install a permanent boot override.
 

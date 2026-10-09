@@ -22,6 +22,7 @@ if ! docker image inspect "$math_image" >/dev/null 2>&1; then
   docker build --platform linux/arm64 --build-context "sdk=$stage/sdk" \
     -f "$root/tools/mathpng/Dockerfile" -t "$math_image" "$root/tools/mathpng"
 fi
+docker run --rm --platform linux/arm64 -v "$root:/project:ro" "$math_image" python3 /project/tests/installer_contract.py
 curl --fail --location --silent --show-error https://codeload.github.com/NanoMichael/MicroTeX/tar.gz/0e3707f6dafebb121d98b53c64364d16fefe481d -o "$stage/microtex.tar.gz"
 curl --fail --location --silent --show-error https://codeload.github.com/leethomason/tinyxml2/tar.gz/refs/tags/10.0.0 -o "$stage/tinyxml.tar.gz"
 verify "$stage/microtex.tar.gz" 47476269d29c41df322bce6bdd2daa7017cc50b9eda841b2bec1767dba28daa6
