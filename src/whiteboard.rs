@@ -51,11 +51,6 @@ pub struct Whiteboard {
     // ink into the framebuffer but the e-ink refresh is batched (one per input
     // drain, not one per sample), which is what keeps inking smooth.
     dirty: Option<(i32, i32, i32, i32)>,
-    // Region inked with the fast (DU, grayscale) waveform since the last color
-    // settle. On the rMPP colour panel a DU refresh drops colour; once writing
-    // pauses we re-refresh this region in colour (GC16) so the card's colour comes
-    // back with the ink kept crisp.
-    settle: Option<(i32, i32, i32, i32)>,
     pub eraser: bool,
 }
 
@@ -74,7 +69,6 @@ impl Whiteboard {
             scroll: 0.0,
             zoom: 1.0,
             dirty: None,
-            settle: None,
             eraser: false,
         }
     }
@@ -118,7 +112,6 @@ impl Whiteboard {
         self.active = None;
         self.last = None;
         self.dirty = None;
-        self.settle = None;
         for b in self.ink.iter_mut() {
             *b = 0;
         }
@@ -139,13 +132,6 @@ impl Whiteboard {
             }
         }
         self.last = None;
-    }
-
-    /// Drop a pending colour settle WITHOUT refreshing. In black-and-white mode there
-    /// is no colour to restore, so the fast-waveform ink stands as-is; this just
-    /// clears `needs_settle()` so the loop stops queuing a redundant GC16 flash.
-    pub fn discard_settle(&mut self) {
-        self.settle = None;
     }
 
     /// Push `base` composited with `ink` into the framebuffer and do a clean full
@@ -172,12 +158,11 @@ impl Whiteboard {
         // The full GC16 colour refresh supersedes any pending partial AND clears
         // accumulated fast-waveform artifacts (ghosts / "empty white rectangles").
         self.dirty = None;
-        self.settle = None;
     }
 
     /// Push ONLY the card band (base + ink) with a fast DU partial refresh — the
     /// scroll-step hot path. Non-blocking: if the e-ink server is behind, the frame
-    /// is in shm and the next step (or the colour settle) will show it. DU (not A2)
+    /// is in shm and the next update will show it. DU (not A2)
     /// because the band is card CONTENT — grayscale/images — not just ink.
     pub fn blit_band_fast(&mut self, qtfb: &mut Qtfb) {
         let shm: &mut [u8] = &mut *qtfb.shm;
@@ -198,8 +183,6 @@ impl Whiteboard {
         }
         let _ = qtfb.try_set_refresh_mode(REFRESH_MODE_FAST);
         let _ = qtfb.try_update_partial(0, CARD_Y as i32, WIDTH as i32, CARD_H as i32);
-        // The DU pass dropped colour over the whole band — queue a colour settle.
-        self.settle = Some((0, CARD_Y as i32, (WIDTH - 1) as i32, (CARD_Y + CARD_H - 1) as i32));
         self.dirty = None; // superseded: the whole band was just pushed
     }
 
@@ -321,7 +304,11 @@ impl Whiteboard {
             let zoom = self.zoom;
             let cx = ((x as f32) / zoom).round() as i32;
             let cy = (((y - CARD_Y as i32) as f32) / zoom + self.scroll).round() as i32;
-            let wpanel = if erasing { (ERASE_RADIUS * 2) as f32 } else { s.w as f32 };
+            let wpanel = if erasing {
+                (ERASE_RADIUS * 2) as f32
+            } else {
+                s.w as f32
+            };
             let wrec = (wpanel / zoom).max(1.0) as u8;
             if let Some(st) = self.active.as_mut() {
                 st.pts.push((cx, cy, wrec));
@@ -351,14 +338,6 @@ impl Whiteboard {
                 .try_update_partial(x0, y0, x1 - x0 + 1, y1 - y0 + 1)
                 .is_ok()
             {
-                // Sent with the grayscale DU waveform — remember the region so a
-                // colour settle can restore it once writing pauses.
-                self.settle = Some(match self.settle {
-                    None => (x0, y0, x1, y1),
-                    Some((sx0, sy0, sx1, sy1)) => {
-                        (sx0.min(x0), sy0.min(y0), sx1.max(x1), sy1.max(y1))
-                    }
-                });
                 self.dirty = None; // sent; otherwise keep it and retry
             }
         }
@@ -370,26 +349,7 @@ impl Whiteboard {
         self.dirty.is_some()
     }
 
-    /// True while a fast-waveform-inked region is waiting for its colour (GC16)
-    /// clean.
-    pub fn needs_settle(&self) -> bool {
-        self.settle.is_some()
-    }
-
-    /// Colour-clean ONLY the region inked with the fast waveform (one GC16
-    /// `update_partial`, not a whole-screen refresh) — restores the card's colour
-    /// and clears fast-waveform artifacts there, with a localized (not full-screen)
-    /// flash. Called once writing has paused; the debounce collapses many
-    /// mid-sentence pauses into a single settle. Blocking send is fine (we're idle).
-    pub fn settle_color(&mut self, qtfb: &mut Qtfb) {
-        if let Some((x0, y0, x1, y1)) = self.settle.take() {
-            let _ = qtfb.set_refresh_mode(REFRESH_MODE_CONTENT);
-            let _ = qtfb.update_partial(x0, y0, x1 - x0 + 1, y1 - y0 + 1);
-        }
-    }
-
-    /// True while a pen stroke is in progress — used for palm rejection (ignore
-    /// finger touches while the pen is writing).
+    /// Whether a pen stroke is still active.
     pub fn is_inking(&self) -> bool {
         self.active.is_some()
     }

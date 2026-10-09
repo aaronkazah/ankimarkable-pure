@@ -1,10 +1,4 @@
-//! ankimarkable — Anki review client for the reMarkable Paper Pro (AppLoad/QTFB).
-//!
-//! Review the `uni` deck on-device with Anki's real backend (rslib): true `.anki2`
-//! collection, real FSRS scheduler, AnkiWeb sync, full HTML/CSS card rendering,
-//! plus an AnkiDroid-style pen **whiteboard** over the card so you can write your
-//! answer before revealing. External AppLoad app — no xochitl injection, no
-//! bank-flip risk.
+//! Native Anki reviews and pen answers on reMarkable Paper Pure.
 
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -12,17 +6,14 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 
-use ankimarkable::backend::{self, Backend, Counts, DeckInfo, Stats, SyncReport};
-use ankimarkable::gesture::{CardGesture, CardTouch};
-use ankimarkable::orient::OrientTracker;
-use ankimarkable::pen::Pen;
-use ankimarkable::qtfb::{
-    Qtfb, INPUT_TOUCH_PRESS, INPUT_TOUCH_RELEASE, INPUT_TOUCH_UPDATE, REFRESH_MODE_CONTENT,
-};
-use ankimarkable::render::{CardView, Renderer, ZOOM_STEPS};
-use ankimarkable::ui::{self, Hit, HomeHit, MenuState, Phase};
-use ankimarkable::prefs::Prefs;
-use ankimarkable::whiteboard::Whiteboard;
+use ankimarkable_pure::backend::{self, Backend, Counts, DeckInfo, Stats, SyncReport};
+use ankimarkable_pure::gesture::{CardGesture, CardTouch};
+use ankimarkable_pure::pen::Pen;
+use ankimarkable_pure::prefs::Prefs;
+use ankimarkable_pure::qtfb::{Qtfb, INPUT_TOUCH_PRESS, INPUT_TOUCH_RELEASE, INPUT_TOUCH_UPDATE};
+use ankimarkable_pure::render::{CardView, Renderer, ZOOM_STEPS};
+use ankimarkable_pure::ui::{self, Hit, HomeHit, MenuState, Phase};
+use ankimarkable_pure::whiteboard::Whiteboard;
 
 static RUNNING: AtomicBool = AtomicBool::new(true);
 
@@ -30,7 +21,7 @@ extern "C" fn on_sigterm(_sig: i32) {
     RUNNING.store(false, Ordering::SeqCst);
 }
 
-const DATA_DIR: &str = "/home/root/.ankimarkable";
+const DATA_DIR: &str = "/home/root/.ankimarkable-pure";
 
 /// Which screen is showing. The app opens to Home (deck list + streak); tapping a
 /// deck enters Review; the Home button returns.
@@ -103,18 +94,7 @@ fn run(mut qtfb: Qtfb) -> Result<()> {
         }
     };
 
-    // The host composites our buffer rotated when xochitl's scene is
-    // portrait-inverted (and pre-transforms the QTFB touch stream to match), but
-    // the raw-evdev marker bypasses that — so the pen frame must track the scene
-    // orientation or ink lands point-mirrored (see orient.rs).
-    let mut orient = OrientTracker::new();
-    if let Some(p) = pen.as_mut() {
-        p.set_flip180(orient.flip180());
-    }
-    eprintln!(
-        "ankimarkable: orientation {}",
-        if orient.flip180() { "portrait-inverted" } else { "portrait" }
-    );
+    let mut pen_inverted = false;
 
     // App opens on the Home screen: a collapsible deck tree + streak.
     let mut screen = Screen::Home;
@@ -136,10 +116,6 @@ fn run(mut qtfb: Qtfb) -> Result<()> {
     // (hovering emits a steady event stream, so a real hover keeps refreshing it).
     let mut pen_hover = false;
     const HOVER_WINDOW: Duration = Duration::from_millis(1500);
-    // Idle gap after which a colour settle fires — long enough that pauses BETWEEN
-    // words while handwriting a sentence don't each trigger a refresh (they collapse
-    // into one settle once you actually stop).
-    const SETTLE_IDLE: Duration = Duration::from_millis(1200);
     // Timestamp of the last touch event we processed. This panel drops RELEASE
     // (and pen-up) samples; a dropped gesture-end would otherwise latch
     // `multi_active()`/`is_inking()` true forever and silently swallow every later
@@ -164,21 +140,16 @@ fn run(mut qtfb: Qtfb) -> Result<()> {
     let mut counts = Counts::default();
     let mut current: Option<backend::ReviewCard> = None;
     let mut menu = MenuState::Closed; // ⋮ overflow menu (Flag… / Bury / Suspend)
-    // Persisted preferences: colour vs black-and-white rendering and the zoom
-    // step every card opens at. Loaded here, saved whenever either changes, so
-    // both survive the next card AND the next launch.
+                                      // Persisted preferences: colour vs black-and-white rendering and the zoom
+                                      // step every card opens at. Loaded here, saved whenever either changes, so
+                                      // both survive the next card AND the next launch.
     let prefs_path = std::path::PathBuf::from(format!("{DATA_DIR}/prefs"));
     let mut prefs = Prefs::load(&prefs_path);
-    eprintln!(
-        "ankimarkable: prefs {} zoom={}x",
-        if prefs.mono { "black-and-white" } else { "colour" },
-        ZOOM_STEPS[prefs.zoom_idx]
-    );
+    eprintln!("ankimarkable-pure: zoom={}x", ZOOM_STEPS[prefs.zoom_idx]);
     // Live scrollable/zoomable card document (None until a card is shown).
     let mut view: Option<CardView> = None;
     // Two-finger scroll/pinch recognition over the QTFB touch stream.
     let mut touch = CardTouch::new();
-    let mut last_gesture: Option<Instant> = None;
     let mut phase = Phase::Question;
     let mut status = String::new();
 
@@ -213,7 +184,11 @@ fn run(mut qtfb: Qtfb) -> Result<()> {
         if last_scratch_check.map_or(true, |t| t.elapsed() >= SCRATCH_POLL) {
             last_scratch_check = Some(Instant::now());
             let open = std::fs::read_to_string(SCRATCHPAD_STATE)
-                .map(|s| s.split_whitespace().collect::<String>().contains("\"open\":true"))
+                .map(|s| {
+                    s.split_whitespace()
+                        .collect::<String>()
+                        .contains("\"open\":true")
+                })
                 .unwrap_or(false);
             if open != pen_paused {
                 pen_paused = open;
@@ -230,47 +205,16 @@ fn run(mut qtfb: Qtfb) -> Result<()> {
                 p.set_grab(!open);
             }
         }
-        // Track the scene orientation (rate-limited internally). A confirmed
-        // flip re-frames the pen; any stroke supposedly in flight is stale (the
-        // tablet was just physically rotated), so close it rather than let its
-        // tail tear across the mirrored frame.
-        if let Some(flip) = orient.poll() {
-            if let Some(p) = pen.as_mut() {
-                p.set_flip180(flip);
+        let inverted = qtfb.pen_inverted();
+        if inverted != pen_inverted {
+            if let Some(pen) = pen.as_mut() {
+                pen.set_flip180(inverted);
             }
             wb.end_stroke();
-            eprintln!(
-                "ankimarkable: orientation → {}",
-                if flip { "portrait-inverted" } else { "portrait" }
-            );
+            pen_inverted = inverted;
         }
-        // Flush any pending ink FIRST (non-blocking; keeps the dirty region if the
-        // e-ink server is still busy). Retrying at the loop top means a deferred
-        // update lands promptly without ever blocking the loop. Once writing has
-        // clearly PAUSED (SETTLE_IDLE since the last pen sample — long enough that
-        // mid-sentence word-pauses don't each trigger one), do ONE colour (GC16)
-        // clean of just the inked REGION: the fast DU waveform used while writing is
-        // grayscale + leaves "white rectangle" artifacts on the colour panel; the
-        // region clean restores colour + wipes them with only a small localized
-        // flash (never a whole-screen refresh). The debounce collapses the many
-        // pauses in a sentence into a single settle.
         if screen == Screen::Review {
             wb.flush_ink(&mut qtfb);
-            let pen_quiet = last_pen.map_or(true, |t| t.elapsed() >= SETTLE_IDLE);
-            let gesture_quiet =
-                last_gesture.map_or(true, |t| t.elapsed() >= Duration::from_millis(500));
-            if wb.needs_settle() && pen_quiet && gesture_quiet && !touch.multi_active() {
-                // The settle is a GC16 pass whose ONLY job is to restore colour and
-                // wipe fast-waveform artifacts on the colour panel. In black-and-white
-                // mode there's no colour to restore, so it would be a pointless flash
-                // after every writing pause — drop it (also clears needs_settle() so
-                // the loop returns to its idle poll cadence).
-                if prefs.mono {
-                    wb.discard_settle();
-                } else {
-                    wb.settle_color(&mut qtfb);
-                }
-            }
         }
         let reviewing = screen == Screen::Review;
 
@@ -288,12 +232,9 @@ fn run(mut qtfb: Qtfb) -> Result<()> {
                 revents: 0,
             });
         }
-        // Short timeout while ink is pending so a deferred flush retries within ~30ms;
-        // a medium one while a colour settle is due so it fires shortly after a pause.
+        // Retry pending pen updates promptly without busy-polling while idle.
         let timeout = if reviewing && wb.has_pending_ink() {
             30
-        } else if reviewing && wb.needs_settle() {
-            120
         } else {
             1000
         };
@@ -371,9 +312,8 @@ fn run(mut qtfb: Qtfb) -> Result<()> {
                 Err(_) => break 'main, // socket closed
             };
             let ty = ev.input_type;
-            let is_touch = ty == INPUT_TOUCH_PRESS
-                || ty == INPUT_TOUCH_RELEASE
-                || ty == INPUT_TOUCH_UPDATE;
+            let is_touch =
+                ty == INPUT_TOUCH_PRESS || ty == INPUT_TOUCH_RELEASE || ty == INPUT_TOUCH_UPDATE;
             if !is_touch {
                 continue 'input;
             }
@@ -417,11 +357,9 @@ fn run(mut qtfb: Qtfb) -> Result<()> {
                                         &renderer,
                                         menu,
                                         current.as_ref().map_or(0, |c| c.flags),
-                                        prefs.mono,
                                     );
                                     wb.set_view(v.scroll_css() as f32, v.zoom() as f32);
                                     wb.blit_band_fast(&mut qtfb);
-                                    last_gesture = Some(Instant::now());
                                 }
                             }
                         }
@@ -456,20 +394,13 @@ fn run(mut qtfb: Qtfb) -> Result<()> {
                                             &renderer,
                                             menu,
                                             current.as_ref().map_or(0, |c| c.flags),
-                                            prefs.mono,
                                         );
-                                        // Fast feedback now; the queued colour settle
-                                        // makes it crisp ~500ms after the gesture.
                                         wb.blit_band_fast(&mut qtfb);
-                                        last_gesture = Some(Instant::now());
                                     }
                                 }
                             }
                         }
                         CardGesture::None => {}
-                    }
-                    if touch.multi_active() {
-                        last_gesture = Some(Instant::now());
                     }
                     continue 'input; // card-region touches NEVER hit-test (palm safety)
                 }
@@ -485,26 +416,87 @@ fn run(mut qtfb: Qtfb) -> Result<()> {
             }
 
             match screen {
-            Screen::Home => match ui::hit_test_home(ev.x, ev.y, &visible, scroll) {
-                HomeHit::Deck(i) => {
-                    if let Some(d) = visible.get(i) {
-                        let _ = backend.set_deck_scope_id(d.id);
-                        counts = backend.counts().unwrap_or_default();
-                        current = backend.next_card().unwrap_or(None);
-                        phase = Phase::Question;
-                        status = d.name.clone();
-                        wb.clear_ink();
-                        invalidate_view(&mut view, &mut wb);
-                        screen = Screen::Review;
-                        redraw(&mut qtfb, &renderer, &mut wb, &current, &mut view, phase, counts, &status, menu, &prefs);
-                    }
-                }
-                HomeHit::Toggle(i) => {
-                    if let Some(d) = visible.get(i) {
-                        let id = d.id.0;
-                        if !collapsed.remove(&id) {
-                            collapsed.insert(id);
+                Screen::Home => match ui::hit_test_home(ev.x, ev.y, &visible, scroll) {
+                    HomeHit::Deck(i) => {
+                        if let Some(d) = visible.get(i) {
+                            let _ = backend.set_deck_scope_id(d.id);
+                            counts = backend.counts().unwrap_or_default();
+                            current = backend.next_card().unwrap_or(None);
+                            phase = Phase::Question;
+                            status = d.name.clone();
+                            wb.clear_ink();
+                            invalidate_view(&mut view, &mut wb);
+                            screen = Screen::Review;
+                            redraw(
+                                &mut qtfb, &renderer, &mut wb, &current, &mut view, phase, counts,
+                                &status, menu, &prefs,
+                            );
                         }
+                    }
+                    HomeHit::Toggle(i) => {
+                        if let Some(d) = visible.get(i) {
+                            let id = d.id.0;
+                            if !collapsed.remove(&id) {
+                                collapsed.insert(id);
+                            }
+                            visible = visible_decks(&all_decks, &collapsed);
+                            clamp_scroll(&mut scroll, visible.len());
+                            ui::draw_home(
+                                &mut qtfb,
+                                &renderer,
+                                &visible,
+                                scroll,
+                                home_stats(base_stats, session_reviews),
+                            );
+                        }
+                    }
+                    HomeHit::ScrollUp => {
+                        let step = ui::home_page_rows().saturating_sub(1).max(1);
+                        scroll = scroll.saturating_sub(step);
+                        ui::draw_home(
+                            &mut qtfb,
+                            &renderer,
+                            &visible,
+                            scroll,
+                            home_stats(base_stats, session_reviews),
+                        );
+                    }
+                    HomeHit::ScrollDown => {
+                        let step = ui::home_page_rows().saturating_sub(1).max(1);
+                        let max_scroll = visible.len().saturating_sub(ui::home_page_rows());
+                        scroll = (scroll + step).min(max_scroll);
+                        ui::draw_home(
+                            &mut qtfb,
+                            &renderer,
+                            &visible,
+                            scroll,
+                            home_stats(base_stats, session_reviews),
+                        );
+                    }
+                    HomeHit::Sync => {
+                        ui::draw_message(
+                            &mut qtfb,
+                            &renderer,
+                            "Syncing…",
+                            "Contacting AnkiWeb — this can take a moment.",
+                        );
+                        let report = do_sync(&mut backend);
+                        let body = sync_report_body(&report);
+                        eprintln!(
+                            "ankimarkable: sync from home: {} | {}",
+                            report.headline,
+                            body.replace('\n', " | ")
+                        );
+                        // Hold the report on screen until acknowledged — the counts
+                        // are the only feedback that the sync actually moved cards.
+                        let msg = if body.is_empty() {
+                            "Tap anywhere to continue.".to_string()
+                        } else {
+                            format!("{body}\n\nTap anywhere to continue.")
+                        };
+                        ui::draw_message(&mut qtfb, &renderer, &report.headline, &msg);
+                        wait_for_tap(&mut qtfb);
+                        all_decks = backend.deck_infos().unwrap_or_default();
                         visible = visible_decks(&all_decks, &collapsed);
                         clamp_scroll(&mut scroll, visible.len());
                         ui::draw_home(
@@ -515,228 +507,182 @@ fn run(mut qtfb: Qtfb) -> Result<()> {
                             home_stats(base_stats, session_reviews),
                         );
                     }
-                }
-                HomeHit::ScrollUp => {
-                    let step = ui::home_page_rows().saturating_sub(1).max(1);
-                    scroll = scroll.saturating_sub(step);
-                    ui::draw_home(
-                        &mut qtfb,
-                        &renderer,
-                        &visible,
-                        scroll,
-                        home_stats(base_stats, session_reviews),
-                    );
-                }
-                HomeHit::ScrollDown => {
-                    let step = ui::home_page_rows().saturating_sub(1).max(1);
-                    let max_scroll = visible.len().saturating_sub(ui::home_page_rows());
-                    scroll = (scroll + step).min(max_scroll);
-                    ui::draw_home(
-                        &mut qtfb,
-                        &renderer,
-                        &visible,
-                        scroll,
-                        home_stats(base_stats, session_reviews),
-                    );
-                }
-                HomeHit::Sync => {
-                    ui::draw_message(
-                        &mut qtfb,
-                        &renderer,
-                        "Syncing…",
-                        "Contacting AnkiWeb — this can take a moment.",
-                    );
-                    let report = do_sync(&mut backend);
-                    let body = sync_report_body(&report);
-                    eprintln!(
-                        "ankimarkable: sync from home: {} | {}",
-                        report.headline,
-                        body.replace('\n', " | ")
-                    );
-                    // Hold the report on screen until acknowledged — the counts
-                    // are the only feedback that the sync actually moved cards.
-                    let msg = if body.is_empty() {
-                        "Tap anywhere to continue.".to_string()
-                    } else {
-                        format!("{body}\n\nTap anywhere to continue.")
-                    };
-                    ui::draw_message(&mut qtfb, &renderer, &report.headline, &msg);
-                    wait_for_tap(&mut qtfb);
-                    all_decks = backend.deck_infos().unwrap_or_default();
-                    visible = visible_decks(&all_decks, &collapsed);
-                    clamp_scroll(&mut scroll, visible.len());
-                    ui::draw_home(
-                        &mut qtfb,
-                        &renderer,
-                        &visible,
-                        scroll,
-                        home_stats(base_stats, session_reviews),
-                    );
-                }
-                HomeHit::Exit => break 'main,
-                HomeHit::None => {}
-            },
-            // While the ⋮ menu is open, taps hit its items (or dismiss it).
-            Screen::Review if menu != MenuState::Closed => {
-                let act = ui::hit_menu(ev.x, ev.y, menu);
-                let mut advanced = false;
-                match act {
-                    // Switch to the Flags submenu — the panel STAYS open.
-                    ui::MenuHit::OpenFlags => menu = MenuState::Flags,
-                    ui::MenuHit::Flag(n) => {
-                        // Deliberately NON-advancing: you flag a card and keep
-                        // reviewing it. Op::SetFlag is undoable, so the Undo
-                        // button undoes a flag before a grade — matches Anki.
-                        if let Some(card) = current.as_mut() {
-                            match backend.set_flag(card.card_id, n) {
-                                Ok(()) => card.flags = n as u8,
-                                Err(e) => status = format!("flag error: {e}"),
+                    HomeHit::Exit => break 'main,
+                    HomeHit::None => {}
+                },
+                // While the ⋮ menu is open, taps hit its items (or dismiss it).
+                Screen::Review if menu != MenuState::Closed => {
+                    let act = ui::hit_menu(ev.x, ev.y, menu);
+                    let mut advanced = false;
+                    match act {
+                        // Switch to the Flags submenu — the panel STAYS open.
+                        ui::MenuHit::OpenFlags => menu = MenuState::Flags,
+                        ui::MenuHit::Flag(n) => {
+                            // Deliberately NON-advancing: you flag a card and keep
+                            // reviewing it. Op::SetFlag is undoable, so the Undo
+                            // button undoes a flag before a grade — matches Anki.
+                            if let Some(card) = current.as_mut() {
+                                match backend.set_flag(card.card_id, n) {
+                                    Ok(()) => card.flags = n as u8,
+                                    Err(e) => status = format!("flag error: {e}"),
+                                }
                             }
+                            menu = MenuState::Closed;
                         }
-                        menu = MenuState::Closed;
-                    }
-                    ui::MenuHit::Bury => {
-                        if let Some(card) = &current {
-                            if let Err(e) = backend.bury_card(card.card_id) {
-                                status = format!("bury error: {e}");
+                        ui::MenuHit::Bury => {
+                            if let Some(card) = &current {
+                                if let Err(e) = backend.bury_card(card.card_id) {
+                                    status = format!("bury error: {e}");
+                                }
                             }
+                            advanced = true;
+                            menu = MenuState::Closed;
                         }
-                        advanced = true;
-                        menu = MenuState::Closed;
-                    }
-                    ui::MenuHit::Suspend => {
-                        if let Some(card) = &current {
-                            if let Err(e) = backend.suspend_note(card.note_id) {
-                                status = format!("suspend error: {e}");
+                        ui::MenuHit::Suspend => {
+                            if let Some(card) = &current {
+                                if let Err(e) = backend.suspend_note(card.note_id) {
+                                    status = format!("suspend error: {e}");
+                                }
                             }
+                            advanced = true;
+                            menu = MenuState::Closed;
                         }
-                        advanced = true;
-                        menu = MenuState::Closed;
+                        // Tapped outside → just dismiss.
+                        ui::MenuHit::None => menu = MenuState::Closed,
                     }
-                    // Tapped outside → just dismiss.
-                    ui::MenuHit::None => menu = MenuState::Closed,
-                }
-                if advanced {
-                    counts = backend.counts().unwrap_or_default();
-                    current = backend.next_card().unwrap_or(None);
-                    phase = Phase::Question;
-                    wb.clear_ink();
-                    invalidate_view(&mut view, &mut wb);
-                }
-                redraw(&mut qtfb, &renderer, &mut wb, &current, &mut view, phase, counts, &status, menu, &prefs);
-            }
-            Screen::Review => match ui::hit_test(ev.x, ev.y, phase) {
-                Hit::Exit => break 'main,
-                Hit::Home => {
-                    // Back to the deck list; rebuild deck counts (streak is cached).
-                    invalidate_view(&mut view, &mut wb);
-                    touch = CardTouch::new();
-                    screen = Screen::Home;
-                    all_decks = backend.deck_infos().unwrap_or_default();
-                    visible = visible_decks(&all_decks, &collapsed);
-                    clamp_scroll(&mut scroll, visible.len());
-                    wb.clear_ink();
-                    ui::draw_home(
-                        &mut qtfb,
-                        &renderer,
-                        &visible,
-                        scroll,
-                        home_stats(base_stats, session_reviews),
-                    );
-                }
-                Hit::Sync => {
-                    ui::draw_message(
-                        &mut qtfb,
-                        &renderer,
-                        "Syncing…",
-                        "Contacting AnkiWeb — this can take a moment.",
-                    );
-                    let report = do_sync(&mut backend);
-                    let body = sync_report_body(&report);
-                    eprintln!(
-                        "ankimarkable: sync from review: {} | {}",
-                        report.headline,
-                        body.replace('\n', " | ")
-                    );
-                    let msg = if body.is_empty() {
-                        "Tap anywhere to continue.".to_string()
-                    } else {
-                        format!("{body}\n\nTap anywhere to continue.")
-                    };
-                    ui::draw_message(&mut qtfb, &renderer, &report.headline, &msg);
-                    wait_for_tap(&mut qtfb);
-                    status = report.headline;
-                    counts = backend.counts().unwrap_or_default();
-                    current = backend.next_card().unwrap_or(None);
-                    phase = Phase::Question;
-                    wb.clear_ink();
-                    invalidate_view(&mut view, &mut wb);
-                    redraw(&mut qtfb, &renderer, &mut wb, &current, &mut view, phase, counts, &status, menu, &prefs);
-                }
-                Hit::ShowAnswer => {
-                    if current.is_some() && phase == Phase::Question {
-                        phase = Phase::Answer;
-                        invalidate_view(&mut view, &mut wb);
-                        // Keep ink so you can compare your answer against the card.
-                        redraw(&mut qtfb, &renderer, &mut wb, &current, &mut view, phase, counts, &status, menu, &prefs);
-                    }
-                }
-                Hit::Grade(g) => {
-                    if phase == Phase::Answer {
-                        if let Some(card) = &current {
-                            match backend.answer(card, g) {
-                                Ok(()) => session_reviews += 1,
-                                Err(e) => status = format!("answer error: {e}"),
-                            }
-                        }
+                    if advanced {
                         counts = backend.counts().unwrap_or_default();
                         current = backend.next_card().unwrap_or(None);
                         phase = Phase::Question;
-                        wb.clear_ink(); // next card starts on a clean whiteboard
+                        wb.clear_ink();
                         invalidate_view(&mut view, &mut wb);
-                        redraw(&mut qtfb, &renderer, &mut wb, &current, &mut view, phase, counts, &status, menu, &prefs);
                     }
+                    redraw(
+                        &mut qtfb, &renderer, &mut wb, &current, &mut view, phase, counts, &status,
+                        menu, &prefs,
+                    );
                 }
-                Hit::Undo => {
-                    // Undo the last pen stroke; when the whiteboard is empty, fall
-                    // through to undoing the last graded card (Anki collection undo).
-                    if !wb.undo(&mut qtfb) {
-                        match backend.undo() {
-                            Ok(true) => {
-                                session_reviews = session_reviews.saturating_sub(1);
-                                counts = backend.counts().unwrap_or_default();
-                                current = backend.next_card().unwrap_or(None);
-                                phase = Phase::Question;
-                                wb.clear_ink();
-                                invalidate_view(&mut view, &mut wb);
-                                redraw(
-                                    &mut qtfb, &renderer, &mut wb, &current, &mut view, phase,
-                                    counts, &status, menu, &prefs,
-                                );
-                            }
-                            _ => {} // nothing to undo
+                Screen::Review => match ui::hit_test(ev.x, ev.y, phase) {
+                    Hit::Exit => break 'main,
+                    Hit::Home => {
+                        // Back to the deck list; rebuild deck counts (streak is cached).
+                        invalidate_view(&mut view, &mut wb);
+                        touch = CardTouch::new();
+                        screen = Screen::Home;
+                        all_decks = backend.deck_infos().unwrap_or_default();
+                        visible = visible_decks(&all_decks, &collapsed);
+                        clamp_scroll(&mut scroll, visible.len());
+                        wb.clear_ink();
+                        ui::draw_home(
+                            &mut qtfb,
+                            &renderer,
+                            &visible,
+                            scroll,
+                            home_stats(base_stats, session_reviews),
+                        );
+                    }
+                    Hit::Sync => {
+                        ui::draw_message(
+                            &mut qtfb,
+                            &renderer,
+                            "Syncing…",
+                            "Contacting AnkiWeb — this can take a moment.",
+                        );
+                        let report = do_sync(&mut backend);
+                        let body = sync_report_body(&report);
+                        eprintln!(
+                            "ankimarkable: sync from review: {} | {}",
+                            report.headline,
+                            body.replace('\n', " | ")
+                        );
+                        let msg = if body.is_empty() {
+                            "Tap anywhere to continue.".to_string()
+                        } else {
+                            format!("{body}\n\nTap anywhere to continue.")
+                        };
+                        ui::draw_message(&mut qtfb, &renderer, &report.headline, &msg);
+                        wait_for_tap(&mut qtfb);
+                        status = report.headline;
+                        counts = backend.counts().unwrap_or_default();
+                        current = backend.next_card().unwrap_or(None);
+                        phase = Phase::Question;
+                        wb.clear_ink();
+                        invalidate_view(&mut view, &mut wb);
+                        redraw(
+                            &mut qtfb, &renderer, &mut wb, &current, &mut view, phase, counts,
+                            &status, menu, &prefs,
+                        );
+                    }
+                    Hit::ShowAnswer => {
+                        if current.is_some() && phase == Phase::Question {
+                            phase = Phase::Answer;
+                            invalidate_view(&mut view, &mut wb);
+                            // Keep ink so you can compare your answer against the card.
+                            redraw(
+                                &mut qtfb, &renderer, &mut wb, &current, &mut view, phase, counts,
+                                &status, menu, &prefs,
+                            );
                         }
                     }
-                }
-                Hit::Clear => wb.clear(&mut qtfb),
-                Hit::EraserToggle => {
-                    wb.toggle_eraser();
-                    // Recompose so the toolbar reflects the toggle; ink is kept.
-                    redraw(&mut qtfb, &renderer, &mut wb, &current, &mut view, phase, counts, &status, menu, &prefs);
-                }
-                Hit::Menu => {
-                    // Open the ⋮ overflow menu (Flag… / Bury card / Suspend note).
-                    menu = MenuState::Root;
-                    redraw(&mut qtfb, &renderer, &mut wb, &current, &mut view, phase, counts, &status, menu, &prefs);
-                }
-                Hit::ColorToggle => {
-                    // Tap the counts (top-left) to flip colour / black-and-white.
-                    prefs.mono = !prefs.mono;
-                    prefs.save_or_warn(&prefs_path);
-                    redraw(&mut qtfb, &renderer, &mut wb, &current, &mut view, phase, counts, &status, menu, &prefs);
-                }
-                Hit::None => {}
-            },
+                    Hit::Grade(g) => {
+                        if phase == Phase::Answer {
+                            if let Some(card) = &current {
+                                match backend.answer(card, g) {
+                                    Ok(()) => session_reviews += 1,
+                                    Err(e) => status = format!("answer error: {e}"),
+                                }
+                            }
+                            counts = backend.counts().unwrap_or_default();
+                            current = backend.next_card().unwrap_or(None);
+                            phase = Phase::Question;
+                            wb.clear_ink(); // next card starts on a clean whiteboard
+                            invalidate_view(&mut view, &mut wb);
+                            redraw(
+                                &mut qtfb, &renderer, &mut wb, &current, &mut view, phase, counts,
+                                &status, menu, &prefs,
+                            );
+                        }
+                    }
+                    Hit::Undo => {
+                        // Undo the last pen stroke; when the whiteboard is empty, fall
+                        // through to undoing the last graded card (Anki collection undo).
+                        if !wb.undo(&mut qtfb) {
+                            match backend.undo() {
+                                Ok(true) => {
+                                    session_reviews = session_reviews.saturating_sub(1);
+                                    counts = backend.counts().unwrap_or_default();
+                                    current = backend.next_card().unwrap_or(None);
+                                    phase = Phase::Question;
+                                    wb.clear_ink();
+                                    invalidate_view(&mut view, &mut wb);
+                                    redraw(
+                                        &mut qtfb, &renderer, &mut wb, &current, &mut view, phase,
+                                        counts, &status, menu, &prefs,
+                                    );
+                                }
+                                _ => {} // nothing to undo
+                            }
+                        }
+                    }
+                    Hit::Clear => wb.clear(&mut qtfb),
+                    Hit::EraserToggle => {
+                        wb.toggle_eraser();
+                        // Recompose so the toolbar reflects the toggle; ink is kept.
+                        redraw(
+                            &mut qtfb, &renderer, &mut wb, &current, &mut view, phase, counts,
+                            &status, menu, &prefs,
+                        );
+                    }
+                    Hit::Menu => {
+                        // Open the ⋮ overflow menu (Flag… / Bury card / Suspend note).
+                        menu = MenuState::Root;
+                        redraw(
+                            &mut qtfb, &renderer, &mut wb, &current, &mut view, phase, counts,
+                            &status, menu, &prefs,
+                        );
+                    }
+                    Hit::None => {}
+                },
             }
         } // 'input drain
     }
@@ -765,7 +711,6 @@ fn redraw(
     prefs: &Prefs,
 ) {
     let eraser = wb.eraser;
-    let mono = prefs.mono;
     let frame = match current {
         Some(card) => {
             let html = match phase {
@@ -788,9 +733,7 @@ fn redraw(
             let v = view.as_ref().unwrap();
             let mut window = v.paint_window();
             ui::draw_scroll_indicator(&mut window, v.scroll_phys(), v.max_scroll(), v.content_h());
-            ui::compose_review(
-                renderer, &window, card, phase, counts, status, eraser, menu, mono,
-            )
+            ui::compose_review(renderer, &window, card, phase, counts, status, eraser, menu)
         }
         // Keep the top menu bar so Home / Sync / Exit still work (an empty deck or
         // a finished one must not strand you on a chrome-less screen).
@@ -869,7 +812,7 @@ fn do_sync(backend: &mut Backend) -> SyncReport {
         Ok(s) => s,
         Err(_) => {
             return SyncReport {
-                headline: "no AnkiWeb creds (ankiweb.txt)".to_string(),
+                headline: "Sync is not configured. See the setup instructions.".to_string(),
                 ..Default::default()
             }
         }
@@ -877,7 +820,7 @@ fn do_sync(backend: &mut Backend) -> SyncReport {
     let mut lines = raw.lines();
     let (Some(user), Some(pass)) = (lines.next(), lines.next()) else {
         return SyncReport {
-            headline: "ankiweb.txt needs user + pass lines".to_string(),
+            headline: "Saved sync details are incomplete.".to_string(),
             ..Default::default()
         };
     };

@@ -40,7 +40,7 @@ const F_EMOJI: &[u8] = include_bytes!("../assets/fonts/NotoEmoji-Regular.ttf");
 const F_NERD: &[u8] = include_bytes!("../assets/fonts/SymbolsNerdFontMono-Regular.ttf");
 // XITS Math — broad math-symbol coverage (arrows like ⇒ U+21D2, operators, greek)
 // that cards use as literal unicode in prose. Without it those show tofu boxes.
-const F_XITS: &[u8] = include_bytes!("../assets/fonts/rex-xits.otf");
+const F_XITS: &[u8] = include_bytes!("../assets/fonts/XITSMath-Regular.otf");
 
 pub struct Renderer {
     font_ctx: FontContext,
@@ -131,7 +131,13 @@ impl Renderer {
     /// `build_card_view` laid out directly at `ZOOM_STEPS[zoom_idx]` — the
     /// persisted zoom preference, so every card opens at the level you last
     /// pinched to instead of snapping back to 1.0×.
-    pub fn build_card_view_at(&self, html: &str, width: u32, height: u32, zoom_idx: usize) -> CardView {
+    pub fn build_card_view_at(
+        &self,
+        html: &str,
+        width: u32,
+        height: u32,
+        zoom_idx: usize,
+    ) -> CardView {
         let doc = self.build_document(html, width, height);
         let mut view = CardView {
             doc,
@@ -262,23 +268,85 @@ impl CardView {
 /// makes such a card resolve to the real family, with bold/italic matching
 /// intact, instead of falling through to the glyph-fallback chain.
 const SANS_ALIASES: &[&str] = &[
-    "arial", "helvetica", "helvetica neue", "verdana", "tahoma", "segoe ui", "calibri",
-    "trebuchet ms", "roboto", "open sans", "lato", "ubuntu", "dejavu sans", "liberation sans",
-    "arial unicode ms", "lucida grande", "lucida sans unicode", "gill sans", "optima",
-    "avenir", "avenir next", "futura", "inter", "source sans pro", "fira sans", "nunito",
-    "montserrat", "raleway", "pt sans", "droid sans", "san francisco", "sf pro text",
-    "sf pro display", "-apple-system", "blinkmacsystemfont",
+    "arial",
+    "helvetica",
+    "helvetica neue",
+    "verdana",
+    "tahoma",
+    "segoe ui",
+    "calibri",
+    "trebuchet ms",
+    "roboto",
+    "open sans",
+    "lato",
+    "ubuntu",
+    "dejavu sans",
+    "liberation sans",
+    "arial unicode ms",
+    "lucida grande",
+    "lucida sans unicode",
+    "gill sans",
+    "optima",
+    "avenir",
+    "avenir next",
+    "futura",
+    "inter",
+    "source sans pro",
+    "fira sans",
+    "nunito",
+    "montserrat",
+    "raleway",
+    "pt sans",
+    "droid sans",
+    "san francisco",
+    "sf pro text",
+    "sf pro display",
+    "-apple-system",
+    "blinkmacsystemfont",
     // Serif names map here too: we ship no serif, and the `serif` generic already
     // resolves to Noto Sans. Better the right glyphs in sans than fallback soup.
-    "times", "times new roman", "georgia", "cambria", "garamond", "palatino",
-    "palatino linotype", "book antiqua", "baskerville", "dejavu serif", "liberation serif",
-    "noto serif", "pt serif", "merriweather", "droid serif", "charter", "constantia",
+    "times",
+    "times new roman",
+    "georgia",
+    "cambria",
+    "garamond",
+    "palatino",
+    "palatino linotype",
+    "book antiqua",
+    "baskerville",
+    "dejavu serif",
+    "liberation serif",
+    "noto serif",
+    "pt serif",
+    "merriweather",
+    "droid serif",
+    "charter",
+    "constantia",
 ];
 const MONO_ALIASES: &[&str] = &[
-    "courier", "courier new", "consolas", "menlo", "monaco", "lucida console", "andale mono",
-    "dejavu sans mono", "liberation mono", "source code pro", "fira code", "fira mono",
-    "jetbrains mono", "ubuntu mono", "roboto mono", "inconsolata", "sf mono", "cascadia code",
-    "cascadia mono", "droid sans mono", "noto sans mono", "hack", "iosevka",
+    "courier",
+    "courier new",
+    "consolas",
+    "menlo",
+    "monaco",
+    "lucida console",
+    "andale mono",
+    "dejavu sans mono",
+    "liberation mono",
+    "source code pro",
+    "fira code",
+    "fira mono",
+    "jetbrains mono",
+    "ubuntu mono",
+    "roboto mono",
+    "inconsolata",
+    "sf mono",
+    "cascadia code",
+    "cascadia mono",
+    "droid sans mono",
+    "noto sans mono",
+    "hack",
+    "iosevka",
 ];
 
 /// Embedded fonts registered, CSS generics mapped to Noto Sans/Mono, common
@@ -378,11 +446,7 @@ fn build_font_ctx() -> FontContext {
     // unknown family render exactly like `sans-serif`; the symbol fonts still
     // catch whatever Noto Sans lacks. `Zzzz` = Unknown script, which is what
     // Private-Use-Area codepoints (Nerd Font icons) resolve to.
-    let chain: Vec<_> = sans_ids
-        .iter()
-        .chain(symbol_ids.iter())
-        .copied()
-        .collect();
+    let chain: Vec<_> = sans_ids.iter().chain(symbol_ids.iter()).copied().collect();
     for tag in [
         b"Latn", b"Grek", b"Cyrl", b"Zyyy", b"Zinh", b"Zsye", b"Zsym", b"Zmth", b"Zzzz",
     ] {

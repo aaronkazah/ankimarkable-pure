@@ -41,7 +41,9 @@ pub enum CardGesture {
     /// fingers dragged upward and the reader wants to see further DOWN the card).
     ScrollStep(i32),
     /// Pinch finished with this final/initial finger-distance ratio.
-    PinchEnd { ratio: f32 },
+    PinchEnd {
+        ratio: f32,
+    },
 }
 
 /// What the caller needs per event: any completed gesture action, plus whether
@@ -59,8 +61,6 @@ enum Mode {
 }
 
 struct Contact {
-    sx: f32,
-    sy: f32,
     lx: f32,
     ly: f32,
     /// Started inside the card region → eligible for gestures.
@@ -161,8 +161,6 @@ impl CardTouch {
                     .or_insert_with(|| {
                         new_contact = true;
                         Contact {
-                            sx: xf,
-                            sy: yf,
                             lx: xf,
                             ly: yf,
                             card: in_card,

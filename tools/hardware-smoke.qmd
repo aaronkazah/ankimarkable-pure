@@ -1,0 +1,15 @@
+VERSION 3.28.0.172
+AFFECT /qml/device/view/navigator/Navigator.qml
+    IMPORT net.asivery.AppLoad 1.0
+    TRAVERSE FocusScope
+        LOCATE AFTER ALL
+        INSERT {
+            Timer {
+                interval: 4000
+                running: true
+                repeat: false
+                onTriggered: AppLoadLauncher.launchApplication("external::ankimarkable-pure", [], {}, false)
+            }
+        }
+    END TRAVERSE
+END AFFECT

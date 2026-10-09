@@ -36,7 +36,7 @@
 
 using namespace tex;
 
-static const char* DEFAULT_RES = "/home/root/xovi/exthome/textBoxes/microtex-res";
+static const char* DEFAULT_RES = "/home/root/.ankimarkable-pure/microtex-res";
 static const color INK = 0xff222222;   // near-black card ink
 static const int   LAYOUT_WIDTH = 4000; // wide enough that a single formula never wraps
 

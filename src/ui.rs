@@ -10,20 +10,19 @@ use crate::backend::{CardKind, Counts, DeckInfo, Grade, ReviewCard, Stats};
 use crate::qtfb::{Qtfb, REFRESH_MODE_CONTENT};
 use crate::render::Renderer;
 
-pub const WIDTH: usize = 1620;
-pub const HEIGHT: usize = 2160;
+pub use crate::device::{PANEL_HEIGHT as HEIGHT, PANEL_WIDTH as WIDTH};
 pub const TOP_H: usize = 110;
 pub const BOTTOM_H: usize = 240;
 pub const CARD_Y: usize = TOP_H;
 pub const CARD_H: usize = HEIGHT - TOP_H - BOTTOM_H;
 
 // Review top-bar buttons, right-to-left: [counts][Home][Undo][Eraser][Clear][Sync][Exit].
-const HOME_W: usize = 160;
-const UNDO_W: usize = 160;
-const ERASE_W: usize = 180;
-const CLEAR_W: usize = 160;
-const SYNC_W: usize = 190;
-const EXIT_W: usize = 160;
+const HOME_W: usize = 140;
+const UNDO_W: usize = 140;
+const ERASE_W: usize = 150;
+const CLEAR_W: usize = 140;
+const SYNC_W: usize = 150;
+const EXIT_W: usize = 140;
 
 // ⋮ overflow menu: a floating button in the card's bottom-right corner, with a
 // popup panel above it (root actions, or the Flag… submenu).
@@ -142,8 +141,6 @@ pub enum Hit {
     EraserToggle,
     /// The ⋮ overflow button (bottom-right) was tapped.
     Menu,
-    /// The counts area (top-left) was tapped — toggle colour / black-and-white.
-    ColorToggle,
     None,
 }
 
@@ -209,8 +206,8 @@ pub fn hit_test(x: i32, y: i32, phase: Phase) -> Hit {
             return Hit::Home;
         }
         // Everything left of the buttons is the counts / status area — tap it to
-        // toggle colour vs black-and-white card rendering.
-        return Hit::ColorToggle;
+        // Counts are informational.
+        return Hit::None;
     }
 
     // Bottom action bar.
@@ -268,7 +265,6 @@ pub fn compose_review(
     status: &str,
     eraser: bool,
     menu: MenuState,
-    mono: bool,
 ) -> Vec<u8> {
     let mut fb = vec![255u8; WIDTH * HEIGHT * 4];
 
@@ -294,11 +290,8 @@ pub fn compose_review(
     if menu != MenuState::Closed {
         draw_menu_panel(&mut fb, renderer, menu, card.flags);
     }
-    // Black-and-white mode: desaturate the WHOLE composed frame (card + chrome) so
-    // the toggle is unmistakable even on an already-monochrome card.
-    if mono {
-        desaturate(&mut fb);
-    }
+    // Keep image and card-template contrast consistent on the monochrome panel.
+    desaturate(&mut fb);
     fb
 }
 
@@ -312,7 +305,6 @@ pub fn patch_card_band(
     renderer: &Renderer,
     menu: MenuState,
     current_flag: u8,
-    mono: bool,
 ) {
     // Reset the band to white, then alpha-composite the window (matches the
     // full-compose path, which blits over a white frame).
@@ -325,9 +317,7 @@ pub fn patch_card_band(
     if menu != MenuState::Closed {
         draw_menu_panel(fb, renderer, menu, current_flag);
     }
-    if mono {
-        desaturate(&mut fb[CARD_Y * WIDTH * 4..(CARD_Y + CARD_H) * WIDTH * 4]);
-    }
+    desaturate(&mut fb[CARD_Y * WIDTH * 4..(CARD_Y + CARD_H) * WIDTH * 4]);
 }
 
 /// Draw a thin scroll-position indicator along the card window's right edge
@@ -462,7 +452,6 @@ pub fn draw_review(
         status,
         eraser,
         MenuState::Closed,
-        false,
     );
     qtfb.blit_rgba(&fb, WIDTH, HEIGHT, 0, 0);
     let _ = qtfb.set_refresh_mode(REFRESH_MODE_CONTENT);
@@ -582,11 +571,7 @@ pub fn compose_home(
     let end = (scroll + fit).min(visible.len());
     let mut rows = String::new();
     for d in visible.get(scroll..end).unwrap_or(&[]) {
-        let cls = if d.name == "uni" && d.level == 0 {
-            "row uni"
-        } else {
-            "row"
-        };
+        let cls = "row";
         let pad = HOME_PAD_L + d.level as usize * HOME_INDENT;
         let chev = if !d.has_children {
             ""
@@ -629,11 +614,9 @@ pub fn compose_home(
          .sync{{width:{sync}px;background:#455a64;}} .exit{{width:{exit}px;background:#333;}}\
          .row{{height:{rowh}px;display:flex;align-items:center;box-sizing:border-box;\
          border-bottom:1px solid #dddddd;padding-right:40px;}}\
-         .row.uni{{background:#eef4ff;}}\
          .chev{{width:{chevw}px;font-size:34px;color:#888;flex:none;}}\
          .nm{{flex:1;font-size:40px;font-weight:600;overflow:hidden;white-space:nowrap;\
          text-overflow:ellipsis;}}\
-         .row.uni .nm{{color:#1565c0;font-weight:800;}}\
          .chips{{font-size:32px;font-weight:700;white-space:nowrap;}}\
          .chips span{{margin-left:32px;display:inline-block;min-width:1.1em;text-align:right;}}\
          .n{{color:#1565c0;}} .l{{color:#c62828;}} .r{{color:#2e7d32;}} .z{{color:#c8c8c8;}}</style></head>\
@@ -788,17 +771,20 @@ fn top_bar_html(counts: Counts, kind: Option<CardKind>, status: &str, eraser: bo
     )
 }
 
-
 fn bottom_bar_html(card: &ReviewCard, phase: Phase) -> String {
-    let head = "<!DOCTYPE html><html><head><style>\
-        body{font-family:sans-serif;margin:0;padding:0;height:100%;background:#fff;}\
-        .row{display:flex;height:100%;}\
-        .cell{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;\
-        border-left:2px solid #fff;}\
-        .name{font-size:40px;font-weight:700;color:#fff;}\
-        .iv{font-size:28px;color:#eee;margin-top:8px;}\
-        .show{display:flex;align-items:center;justify-content:center;height:150px;\
-        font-size:48px;font-weight:700;color:#fff;background:#1565c0;}</style></head><body>";
+    let head = format!(
+        "<!DOCTYPE html><html><head><style>\
+        html,body{{height:{height}px;}}\
+        body{{font-family:sans-serif;margin:0;padding:0;background:#fff;}}\
+        .row{{display:flex;height:{height}px;}}\
+        .cell{{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;\
+        border-left:2px solid #fff;}}\
+        .name{{font-size:40px;font-weight:700;color:#fff;}}\
+        .iv{{font-size:28px;color:#eee;margin-top:8px;}}\
+        .show{{display:flex;align-items:center;justify-content:center;height:{height}px;\
+        font-size:48px;font-weight:700;color:#fff;background:#1565c0;}}</style></head><body>",
+        height = BOTTOM_H
+    );
 
     match phase {
         Phase::Question => {
@@ -829,4 +815,38 @@ fn esc(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{backend::Backend, demo};
+
+    #[test]
+    fn visible_action_buttons_fill_their_touch_regions() {
+        let directory =
+            std::env::temp_dir().join(format!("pure-action-bar-{}", std::process::id()));
+        let path = directory.join("collection.anki2");
+        demo::create(&path).unwrap();
+        let mut backend = Backend::open(path.to_str().unwrap()).unwrap();
+        backend.set_deck_scope(demo::DECK_NAME).unwrap();
+        let card = backend.next_card().unwrap().unwrap();
+        let renderer = Renderer::new();
+        for phase in [Phase::Question, Phase::Answer] {
+            let pixels = renderer.render_rgba(
+                &bottom_bar_html(&card, phase),
+                WIDTH as u32,
+                BOTTOM_H as u32,
+            );
+            for x in [WIDTH / 8, WIDTH * 3 / 8, WIDTH * 5 / 8, WIDTH * 7 / 8] {
+                let index = ((BOTTOM_H - 4) * WIDTH + x) * 4;
+                assert!(
+                    pixels[index..index + 3].iter().any(|value| *value < 240),
+                    "action area must be visible through its bottom edge"
+                );
+            }
+        }
+        drop(backend);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
 }

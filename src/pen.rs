@@ -1,4 +1,4 @@
-//! Raw-evdev reader for the reMarkable Paper Pro pen ("Elan marker input").
+//! Raw-evdev reader for the reMarkable Paper Pure pen ("Elan marker input").
 //!
 //! The QTFB socket only forwards the *touchscreen* (finger) as `INPUT_TOUCH_*`,
 //! which the UI uses for buttons. The Wacom-style marker is a separate evdev
@@ -8,9 +8,10 @@
 //! We resolve the device by `EVIOCGNAME` (the event index is NOT stable across
 //! OTA/reboot — see memory `keyd event-index NOT stable`), open it `O_NONBLOCK`
 //! so it can be `poll()`-multiplexed with the QTFB socket, read the ABS ranges at
-//! runtime via `EVIOCGABS`, and map digitizer coords → the 1620×2160 portrait
+//! runtime via `EVIOCGABS`, and map digitizer coords → the 1404×1872 portrait
 //! panel. Pressure drives stroke width; we ink only while the pen is in contact.
 
+use crate::device::{AxisRange, PANEL_HEIGHT, PANEL_WIDTH};
 use std::io;
 use std::os::unix::io::RawFd;
 
@@ -31,21 +32,6 @@ const BTN_TOOL_RUBBER: u16 = 0x141; // 321 — pen flipped: eraser end in proxim
 const EVIOCGRAB: libc::Ioctl = 0x4004_4590u64 as libc::Ioctl;
 
 // Panel geometry (native portrait). Matches ui::WIDTH / ui::HEIGHT.
-const PANEL_W: i32 = 1620;
-const PANEL_H: i32 = 2160;
-
-// Measured fallbacks (EVIOCGABS on this panel's marker); overridden at runtime.
-const FALLBACK_XMAX: i32 = 11180;
-const FALLBACK_YMAX: i32 = 15340;
-const PRESSURE_MAX: i32 = 4096;
-
-// Base axis orientation. The marker origin matches the panel's on the rMPP; flip
-// constants are here so a live test can correct an inverted axis with one edit.
-// The runtime `flip180` (both axes together) is separate: it mirrors xochitl's
-// portrait-inverted scene rotation, which the raw marker never passes through
-// (see `orient.rs`).
-const FLIP_X: bool = false;
-const FLIP_Y: bool = false;
 
 fn eviocgname(len: usize) -> libc::Ioctl {
     (0x8000_0000u64 | ((len as u64) << 16) | (0x45 << 8) | 0x06) as libc::Ioctl
@@ -79,8 +65,9 @@ pub struct PenSample {
 pub struct Pen {
     fd: RawFd,
     grabbed: bool,
-    xmax: i32,
-    ymax: i32,
+    x_range: AxisRange,
+    y_range: AxisRange,
+    pressure_range: AxisRange,
     // accumulated axis state within the current SYN frame
     x: i32,
     y: i32,
@@ -104,15 +91,28 @@ impl Pen {
             let fl = libc::fcntl(fd, libc::F_GETFL);
             libc::fcntl(fd, libc::F_SETFL, fl | libc::O_NONBLOCK);
         }
-        let xmax = abs_max(fd, ABS_X).unwrap_or(FALLBACK_XMAX).max(1);
-        let ymax = abs_max(fd, ABS_Y).unwrap_or(FALLBACK_YMAX).max(1);
+        let ranges = (|| {
+            Ok::<_, io::Error>((
+                abs_range(fd, ABS_X)?,
+                abs_range(fd, ABS_Y)?,
+                abs_range(fd, ABS_PRESSURE)?,
+            ))
+        })();
+        let (x_range, y_range, pressure_range) = match ranges {
+            Ok(ranges) => ranges,
+            Err(error) => {
+                unsafe { libc::close(fd) };
+                return Err(error);
+            }
+        };
         // Grab exclusively (best-effort). Released on close / process exit.
         let grabbed = unsafe { libc::ioctl(fd, EVIOCGRAB, 1 as libc::c_int) } == 0;
         Ok(Self {
             fd,
             grabbed,
-            xmax,
-            ymax,
+            x_range,
+            y_range,
+            pressure_range,
             x: 0,
             y: 0,
             pressure: 0,
@@ -171,24 +171,14 @@ impl Pen {
     }
 
     fn map_x(&self, raw: i32) -> i32 {
-        let v = (raw.clamp(0, self.xmax) as i64 * PANEL_W as i64 / self.xmax as i64) as i32;
-        if FLIP_X ^ self.flip180 {
-            PANEL_W - 1 - v
-        } else {
-            v
-        }
+        self.x_range.to_pixel(raw, PANEL_WIDTH, self.flip180)
     }
     fn map_y(&self, raw: i32) -> i32 {
-        let v = (raw.clamp(0, self.ymax) as i64 * PANEL_H as i64 / self.ymax as i64) as i32;
-        if FLIP_Y ^ self.flip180 {
-            PANEL_H - 1 - v
-        } else {
-            v
-        }
+        self.y_range.to_pixel(raw, PANEL_HEIGHT, self.flip180)
     }
     fn width(&self) -> u8 {
         // 2..=6 px from pressure.
-        (2 + (self.pressure.clamp(0, PRESSURE_MAX) * 4 / PRESSURE_MAX)) as u8
+        (2 + self.pressure_range.to_pixel(self.pressure, 5, false)) as u8
     }
 
     /// Read all pending events (non-blocking) and invoke `f` once per completed
@@ -198,9 +188,8 @@ impl Pen {
         let sz = std::mem::size_of::<InputEvent>();
         let mut buf = [0u8; std::mem::size_of::<InputEvent>() * 64];
         loop {
-            let n = unsafe {
-                libc::read(self.fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len())
-            };
+            let n =
+                unsafe { libc::read(self.fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
             if n < 0 {
                 let e = io::Error::last_os_error();
                 return match e.raw_os_error() {
@@ -209,12 +198,14 @@ impl Pen {
                 };
             }
             if n == 0 {
-                return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "marker closed"));
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "marker closed",
+                ));
             }
             let count = (n as usize) / sz;
             for i in 0..count {
-                let ev: &InputEvent =
-                    unsafe { &*(buf.as_ptr().add(i * sz) as *const InputEvent) };
+                let ev: &InputEvent = unsafe { &*(buf.as_ptr().add(i * sz) as *const InputEvent) };
                 self.activity = true;
                 match ev.type_ {
                     EV_ABS => match ev.code {
@@ -285,16 +276,13 @@ impl Drop for Pen {
     }
 }
 
-fn abs_max(fd: RawFd, axis: u16) -> Option<i32> {
+fn abs_range(fd: RawFd, axis: u16) -> io::Result<AxisRange> {
     let mut info = [0i32; 6]; // value,min,max,fuzz,flat,resolution
-    let rc = unsafe {
-        libc::ioctl(fd, eviocgabs(axis), info.as_mut_ptr() as *mut libc::c_void)
-    };
-    if rc >= 0 && info[2] > info[1] {
-        Some(info[2])
-    } else {
-        None
+    let rc = unsafe { libc::ioctl(fd, eviocgabs(axis), info.as_mut_ptr() as *mut libc::c_void) };
+    if rc < 0 {
+        return Err(io::Error::last_os_error());
     }
+    AxisRange::new(info[1], info[2])
 }
 
 fn resolve_marker() -> io::Result<(RawFd, String)> {

@@ -1,4 +1,15 @@
 /.env
+/.env.*
+/dist/
+/.backups/
+/.cache/
+/.ssh/
+*.log
+*.anki2*
+*.mdb*
+*.apkg
+*.media/
+ankiweb.txt
 # Rust build output (~2 GB: aarch64-musl release artifacts + vendored rslib).
 /target/
 /vendor/**/target/

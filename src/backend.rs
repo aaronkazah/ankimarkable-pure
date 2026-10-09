@@ -12,15 +12,22 @@ use anki::decks::DeckId;
 use anki::scheduler::answering::{CardAnswer, Rating};
 use anki::scheduler::states::SchedulingStates;
 use anki::search::SortMode;
-use anki_proto::scheduler::bury_or_suspend_cards_request::Mode as BuryMode;
 use anki::sync::collection::normal::SyncActionRequired;
 use anki::sync::login::sync_login;
 use anki::sync::media::progress::MediaSyncProgress;
 use anki::template::RenderedNode;
 use anki::timestamp::{TimestampMillis, TimestampSecs};
+use anki_proto::scheduler::bury_or_suspend_cards_request::Mode as BuryMode;
 use anyhow::Result;
 use std::collections::HashSet;
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+pub fn open_collection(path: &Path) -> Result<Collection> {
+    Ok(CollectionBuilder::new(path)
+        .with_desktop_media_paths()
+        .build()?)
+}
 
 /// The four Anki grades, in button order.
 #[derive(Clone, Copy, Debug)]
@@ -115,9 +122,7 @@ impl Backend {
     /// Open (or create) the collection at `col_path`, wiring desktop-style media
     /// paths (`foo.media/`, `foo.mdb`) so card `<img>` and media sync resolve.
     pub fn open(col_path: &str) -> Result<Self> {
-        let col = CollectionBuilder::new(col_path)
-            .with_desktop_media_paths()
-            .build()?;
+        let col = open_collection(Path::new(col_path))?;
         let media_dir = std::path::Path::new(col_path).with_extension("media");
         Ok(Self {
             col: Some(col),
@@ -134,16 +139,12 @@ impl Backend {
 
     /// Re-open the collection from disk (after a full download replaced the file).
     fn reopen(&mut self) -> Result<()> {
-        self.col = Some(
-            CollectionBuilder::new(&self.col_path)
-                .with_desktop_media_paths()
-                .build()?,
-        );
+        self.col = Some(open_collection(Path::new(&self.col_path))?);
         Ok(())
     }
 
     /// Scope all reviewing to a single deck (and, automatically, its subdecks) by
-    /// human name — e.g. `"uni"` or `"uni::algorithms"`. rslib builds the queue and
+    /// human name — e.g. `"Science"` or `"Science::Biology"`. rslib builds the queue and
     /// due counts from the *current* deck, so setting it here filters everything
     /// downstream (`counts`, `next_card`) with no further changes. Non-destructive:
     /// other decks stay in the collection, just never surfaced.
@@ -169,15 +170,12 @@ impl Backend {
 
     /// The full deck tree flattened depth-first for the home screen: each deck with
     /// its `level`, `has_children`, Anki `collapsed` state, and due counts. Top-level
-    /// decks are `uni`-first then alphabetical; each subtree stays contiguous and its
+    /// decks are alphabetical; each subtree stays contiguous and its
     /// children are sorted alphabetically. Empty `Default` at the top is dropped.
     pub fn deck_infos(&mut self) -> Result<Vec<DeckInfo>> {
         let tree = self.col().deck_tree(Some(TimestampSecs::now()))?;
         let mut top: Vec<_> = tree.children.iter().collect();
-        top.sort_by(|a, b| {
-            (a.name != "uni", a.name.to_lowercase())
-                .cmp(&(b.name != "uni", b.name.to_lowercase()))
-        });
+        top.sort_by_key(|deck| deck.name.to_lowercase());
         // Pre-order DFS via a stack (node ref + level). Push siblings reversed so
         // pop() yields them in order; keeps each subtree contiguous. The proto node
         // type stays inferred (`_`) — no need to name `anki_proto`.
@@ -211,7 +209,6 @@ impl Backend {
         }
         Ok(out)
     }
-
 
     pub fn counts(&mut self) -> Result<Counts> {
         // fetch_limit 0 → no cards materialised, but counts still come from the queue.
@@ -280,14 +277,17 @@ impl Backend {
     /// back. Returns true if something was undone, false if the undo queue is empty.
     /// Bury the current card (⋮ menu → "Bury card"): hides it until tomorrow.
     pub fn bury_card(&mut self, cid: CardId) -> Result<()> {
-        self.col().bury_or_suspend_cards(&[cid], BuryMode::BuryUser)?;
+        self.col()
+            .bury_or_suspend_cards(&[cid], BuryMode::BuryUser)?;
         Ok(())
     }
 
     /// Suspend every card of a note (⋮ menu → "Suspend note"): removes them from
     /// review until manually unsuspended.
     pub fn suspend_note(&mut self, note_id: i64) -> Result<()> {
-        let cids = self.col().search_cards(&format!("nid:{note_id}"), SortMode::NoOrder)?;
+        let cids = self
+            .col()
+            .search_cards(&format!("nid:{note_id}"), SortMode::NoOrder)?;
         if !cids.is_empty() {
             self.col().bury_or_suspend_cards(&cids, BuryMode::Suspend)?;
         }
@@ -334,7 +334,7 @@ impl Backend {
     /// AnkiWeb's authoritative copy is always the right (and safe) resolution. We
     /// never auto-*upload* (that could clobber AnkiWeb), so an upload-only full sync
     /// is surfaced for the user to resolve on desktop. This is what lets a stale or
-    /// freshly-provisioned device fetch the `uni` deck on first sync.
+    /// freshly-provisioned device fetch the collection on first sync.
     pub fn sync(&mut self, username: &str, password: &str) -> Result<SyncReport> {
         use anki::services::CollectionService; // for latest_progress()
         let rt = tokio::runtime::Builder::new_multi_thread()
@@ -344,9 +344,18 @@ impl Backend {
         // HTTP(S)_PROXY env vars by default — a proxy inherited from the launching
         // shell/appload env would silently reroute AnkiWeb traffic and fail.
         let client = reqwest::Client::builder().http1_only().no_proxy().build()?;
-        let auth = rt
-            .block_on(sync_login(username, password, None, client.clone()))
+        let endpoint = std::env::var("ANKIMARKABLE_SYNC_ENDPOINT").ok();
+        let mut auth = rt
+            .block_on(sync_login(
+                username,
+                password,
+                endpoint.clone(),
+                client.clone(),
+            ))
             .map_err(describe_sync_error)?;
+        if let Some(endpoint) = endpoint {
+            auth.endpoint = Some(endpoint.parse()?);
+        }
 
         // 1) Collection sync.
         let out = rt
@@ -413,7 +422,10 @@ impl Backend {
         // "Checked: n" / "Added: ↑x ↓y" / "Removed: ↑x ↓y" — fold into one line.
         if let Ok(p) = self.col().latest_progress() {
             if let Some(anki_proto::collection::progress::Value::MediaSync(ms)) = p.value {
-                report.media = Some(format!("media: {} · {} · {}", ms.checked, ms.added, ms.removed));
+                report.media = Some(format!(
+                    "media: {} · {} · {}",
+                    ms.checked, ms.added, ms.removed
+                ));
             }
         }
 
@@ -463,7 +475,7 @@ fn wrap_card(css: &str, body: &str) -> String {
     // Two style blocks: a baseline BEFORE the notetype CSS (so decks can restyle
     // their own content), and an override block AFTER it (so it wins). The override
     // (a) enlarges cards — many decks here use "anki-prettify", which caps itself at
-    // `--card-max-width: 40em` / 16px, rendering a small column on the 1620px panel;
+    // `--card-max-width: 40em` / 16px, rendering a small column on the 1404px panel;
     // we lift the width cap and bump the fonts so cards fill the screen — and
     // (b) reveals the prettify "Note"/"Example" panes, which are `display:none` and
     // JS-toggled (blitz runs no JS), so they'd never show otherwise.
@@ -524,15 +536,20 @@ fn stats_from_db(path: &str) -> Result<Stats> {
         .unwrap_or(0);
     let today = (now_secs - crt) / 86_400;
 
-    let mut stmt =
-        conn.prepare("select distinct cast((id/1000 - ?1)/86400 as integer) from revlog where type != 4")?;
+    let mut stmt = conn.prepare(
+        "select distinct cast((id/1000 - ?1)/86400 as integer) from revlog where type != 4",
+    )?;
     let days: HashSet<i64> = stmt
         .query_map([crt], |r| r.get::<_, i64>(0))?
         .filter_map(|x| x.ok())
         .collect();
 
     let mut streak = 0u32;
-    let mut d = if days.contains(&today) { today } else { today - 1 };
+    let mut d = if days.contains(&today) {
+        today
+    } else {
+        today - 1
+    };
     while days.contains(&d) {
         streak += 1;
         d -= 1;

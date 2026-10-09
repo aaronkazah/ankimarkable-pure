@@ -57,22 +57,23 @@ pub struct MathRenderer {
 
 impl MathRenderer {
     pub fn new(media_dir: PathBuf) -> Self {
-        let mathpng = PathBuf::from(env_or("AM_MATHPNG", "/home/root/.ankimarkable/bin/mathpng"));
-        // Res-font resolution: env override, else the app's own bundled copy, else
-        // the textBoxes install (dev convenience) — so a standalone install works
-        // without any other product present.
-        let res = std::env::var("AM_MATHPNG_RES").unwrap_or_else(|_| {
-            let own = "/home/root/.ankimarkable/microtex-res";
-            if std::path::Path::new(own).is_dir() {
-                own.to_string()
-            } else {
-                "/home/root/xovi/exthome/textBoxes/microtex-res".to_string()
-            }
-        });
-        let cache_dir = PathBuf::from(env_or("AM_MATH_CACHE", "/home/root/.ankimarkable/math-cache"));
+        let mathpng = PathBuf::from(env_or(
+            "AM_MATHPNG",
+            "/home/root/.ankimarkable-pure/bin/mathpng",
+        ));
+        let res = env_or(
+            "AM_MATHPNG_RES",
+            "/home/root/.ankimarkable-pure/microtex-res",
+        );
+        let cache_dir = PathBuf::from(env_or(
+            "AM_MATH_CACHE",
+            "/home/root/.ankimarkable-pure/math-cache",
+        ));
         // Only enable the MathJax path if the helper is actually present (it's a
         // device binary; on a Mac spike it's absent → math spans stay raw).
-        let enabled = std::fs::metadata(&mathpng).map(|m| m.is_file()).unwrap_or(false);
+        let enabled = std::fs::metadata(&mathpng)
+            .map(|m| m.is_file())
+            .unwrap_or(false);
         if enabled {
             let _ = std::fs::create_dir_all(&cache_dir);
         }
@@ -168,7 +169,11 @@ impl MathRenderer {
                 // Inline math in TEXT style so fractions/operators stay compact and
                 // fit the line (MathJax does the same for \(...\)); display math in
                 // DISPLAY style (full-size) for \[...\].
-                let style = if *inline { "\\textstyle" } else { "\\displaystyle" };
+                let style = if *inline {
+                    "\\textstyle"
+                } else {
+                    "\\displaystyle"
+                };
                 let _ = writeln!(stdin, "{key:016x}\t{RENDER_PT}\t{style} {clean}");
             }
             // stdin dropped here -> EOF -> mathpng flushes + exits.
@@ -227,7 +232,9 @@ impl MathRenderer {
             .ok()
             .and_then(|svg| rasterize_svg(&svg))
             .map(|png| png_data_uri(&png));
-        self.svg_cache.borrow_mut().insert(fname.to_string(), uri.clone());
+        self.svg_cache
+            .borrow_mut()
+            .insert(fname.to_string(), uri.clone());
         uri
     }
 }
@@ -235,11 +242,15 @@ impl MathRenderer {
 /// Extract a math span's TeX body (inline group 1 or display group 2) and apply
 /// the minimal alias pass.
 fn span_tex(c: &regex::Captures) -> String {
-    let raw = c.get(1).or_else(|| c.get(2)).map(|m| m.as_str()).unwrap_or("");
+    let raw = c
+        .get(1)
+        .or_else(|| c.get(2))
+        .map(|m| m.as_str())
+        .unwrap_or("");
     alias_macros(raw)
 }
 
-/// microtex (clatexmath) covers the AMS/unicode-math commands ReX lacked, so we
+/// microtex (clatexmath) covers the AMS/unicode-math commands the math engine supports, so we
 /// only normalise the HTML-flavoured MathJax-isms it doesn't define. Matches WHOLE
 /// command names (`\[a-zA-Z]+`) so `\gt` can't corrupt `\gtrsim`.
 fn alias_macros(tex: &str) -> String {
@@ -443,7 +454,9 @@ fn png_data_uri(png: &[u8]) -> String {
 }
 
 fn esc_text(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 /// Standard-alphabet base64 (no external dep).
@@ -451,7 +464,11 @@ fn base64_encode(data: &[u8]) -> String {
     const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
     for chunk in data.chunks(3) {
-        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
         let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | (b[2] as u32);
         out.push(T[((n >> 18) & 63) as usize] as char);
         out.push(T[((n >> 12) & 63) as usize] as char);

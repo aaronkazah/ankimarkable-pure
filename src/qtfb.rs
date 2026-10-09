@@ -1,11 +1,11 @@
-//! QTFB client for the reMarkable Paper Pro (portrait-only).
+//! QTFB client for the reMarkable Paper Pure (portrait-only).
 //!
 //! Lifted from `fastterm/src/qtfb.rs` (wire layout verified against rm-appload's
 //! common.h). AppLoad allocates the framebuffer and passes the key in `QTFB_KEY`;
 //! we connect to `/tmp/qtfb.sock` (SOCK_SEQPACKET), receive the shm key + size,
 //! mmap `/dev/shm/qtfb_<key>` RW, then push pixels + region/refresh messages.
 //!
-//! Anki uses the native portrait panel (1620×2160), so the rotation machinery
+//! Anki uses the native portrait panel (1404×1872), so the rotation machinery
 //! from fastterm is dropped here. Card pixels are composited via `blit_rgba`.
 
 use std::cell::Cell;
@@ -24,7 +24,7 @@ pub const MESSAGE_USERINPUT: u8 = 4;
 pub const MESSAGE_SET_REFRESH_MODE: u8 = 5;
 pub const MESSAGE_REQUEST_FULL_REFRESH: u8 = 6;
 
-pub const FBFMT_RMPP_RGB888: u8 = 1;
+use crate::device::{portrait_inverted, FRAMEBUFFER_FORMAT, PANEL_HEIGHT, PANEL_WIDTH};
 
 pub const UPDATE_ALL: i32 = 0;
 pub const UPDATE_PARTIAL: i32 = 1;
@@ -49,9 +49,6 @@ pub struct InputEvent {
     pub y: i32,
     pub d: i32,
 }
-
-pub const RMPP_WIDTH: usize = 1620;
-pub const RMPP_HEIGHT: usize = 2160;
 
 const SOCKET_PATH: &str = "/tmp/qtfb.sock";
 
@@ -103,9 +100,17 @@ struct UserInputContents {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
+struct DeviceStateContents {
+    reason: i32,
+    rotation: i32,
+}
+
+#[repr(C)]
 union ServerMessageContents {
     init: InitMessageResponseContents,
     user_input: UserInputContents,
+    device_state: DeviceStateContents,
 }
 
 #[repr(C)]
@@ -124,6 +129,7 @@ pub struct Qtfb {
     // MESSAGE_SET_REFRESH_MODE, so we only send it on an actual change — a continuous
     // stroke then stays in A2 with zero mode messages.
     current_mode: Cell<i32>,
+    pen_inverted: Cell<bool>,
 }
 
 impl Qtfb {
@@ -170,7 +176,7 @@ impl Qtfb {
             contents: ClientMessageContents {
                 init: InitMessageContents {
                     framebuffer_key: key,
-                    framebuffer_type: FBFMT_RMPP_RGB888,
+                    framebuffer_type: FRAMEBUFFER_FORMAT,
                 },
             },
         };
@@ -211,8 +217,19 @@ impl Qtfb {
             return Err(e);
         }
 
-        let (shm_key, shm_size) =
-            unsafe { (resp.contents.init.shm_key_defined, resp.contents.init.shm_size) };
+        let (shm_key, shm_size) = unsafe {
+            (
+                resp.contents.init.shm_key_defined,
+                resp.contents.init.shm_size,
+            )
+        };
+        if resp.msg_type != MESSAGE_INITIALIZE || shm_size != PANEL_WIDTH * PANEL_HEIGHT * 3 {
+            unsafe { libc::close(fd) };
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "AppLoad returned an incompatible Paper Pure framebuffer",
+            ));
+        }
         let shm_name = format!("/dev/shm/qtfb_{shm_key}");
         let file = OpenOptions::new().read(true).write(true).open(&shm_name)?;
         let shm_ptr = unsafe {
@@ -236,14 +253,42 @@ impl Qtfb {
             fd,
             shm_ptr,
             shm,
-            width: RMPP_WIDTH,
-            height: RMPP_HEIGHT,
+            width: PANEL_WIDTH,
+            height: PANEL_HEIGHT,
             current_mode: Cell::new(-1),
+            pen_inverted: Cell::new(false),
         })
     }
 
     pub fn raw_fd(&self) -> i32 {
         self.fd
+    }
+
+    pub fn pen_inverted(&self) -> bool {
+        self.pen_inverted.get()
+    }
+
+    fn decode_message(&self, msg: ServerMessage) -> Option<InputEvent> {
+        if msg.msg_type == 7 || msg.msg_type == 8 {
+            let state = unsafe { msg.contents.device_state };
+            if state.reason == 0 {
+                if let Some(inverted) = portrait_inverted(state.rotation) {
+                    self.pen_inverted.set(inverted);
+                }
+            }
+            return None;
+        }
+        if msg.msg_type != MESSAGE_USERINPUT {
+            return None;
+        }
+        let input = unsafe { msg.contents.user_input };
+        Some(InputEvent {
+            input_type: input.input_type,
+            dev_id: input.dev_id,
+            x: input.x,
+            y: input.y,
+            d: input.d,
+        })
     }
 
     /// Composite an RGBA buffer (`bw`×`bh`) into the framebuffer at (`x`,`y`),
@@ -436,17 +481,7 @@ impl Qtfb {
                 "qtfb socket closed",
             ));
         }
-        if msg.msg_type != MESSAGE_USERINPUT {
-            return Ok(None);
-        }
-        let ui = unsafe { msg.contents.user_input };
-        Ok(Some(InputEvent {
-            input_type: ui.input_type,
-            dev_id: ui.dev_id,
-            x: ui.x,
-            y: ui.y,
-            d: ui.d,
-        }))
+        Ok(self.decode_message(msg))
     }
 
     /// Blocking recv of one server message. `Some(event)` for input, `None` for a
@@ -475,17 +510,7 @@ impl Qtfb {
                 "qtfb socket closed",
             ));
         }
-        if msg.msg_type != MESSAGE_USERINPUT {
-            return Ok(None);
-        }
-        let ui = unsafe { msg.contents.user_input };
-        Ok(Some(InputEvent {
-            input_type: ui.input_type,
-            dev_id: ui.dev_id,
-            x: ui.x,
-            y: ui.y,
-            d: ui.d,
-        }))
+        Ok(self.decode_message(msg))
     }
 }
 

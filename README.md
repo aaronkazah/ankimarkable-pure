@@ -1,102 +1,123 @@
-# ankimarkable — Anki for the reMarkable Paper Pro
+# Anki for reMarkable Paper Pure
 
-A native **Anki review client for the reMarkable Paper Pro** — Anki's real Rust
-backend (`rslib`), genuine AnkiWeb sync, full HTML/CSS card rendering, LaTeX math,
-and an AnkiDroid-style **pen whiteboard** so you write your answer before revealing
-it. Ships as a standalone [AppLoad](https://github.com/asivery/rm-appload) app: no
-xochitl injection, no boot-bank risk.
+Review Anki flashcards on your Paper Pure and write answers with the Marker before revealing them. Ink stays visible with the answer, then clears when you grade the card.
 
-A ready-to-install bundle (binary + math helper + fonts + manual) is sold at
-[bazaar.abaj.ai/p/ankimarkable](https://bazaar.abaj.ai/p/ankimarkable); building from
-this source is and always will be possible.
+This independent, open-source Anki client builds on Anki's backend and [ankimarkable](https://github.com/abaj8494/ankimarkable). It opens as a separate application through [AppLoad](https://github.com/asivery/rm-appload), preserving reMarkable OS and your reMarkable notebooks.
 
-<p align="center">
-  <img src="docs/side-by-side.png" width="96%" alt="Left: colour-mode review screen — HMM card with inline LaTeX, deck counts with active-queue underline, coloured grade bar. Right: black-and-white mode — a handwritten F-statistic worked on the pen whiteboard over the card, grade bar desaturated.">
-</p>
+## Supported setup
 
-*Left: a card with inline LaTeX rendered on-device, in **colour mode** (note the
-coloured grade bar). Right: the same app in **black-and-white mode** — tap the
-deck counts (top-left) to switch; the whole frame desaturates, which many people
-prefer for text-heavy decks on e-ink — with an answer being worked out by hand
-on the pen whiteboard before revealing.*
+- **reMarkable Paper Pure**, firmware **3.28.0.172**.
+- Developer Mode enabled and USB SSH access working.
+- XOVI with **AppLoad 0.6.0**.
+- Portrait orientation; normal and inverted portrait are supported.
 
-## Features
+Paper Pro, Move, reMarkable 1/2, and other firmware versions are unsupported. The installer checks the model and firmware before copying files. Enabling Developer Mode itself factory-resets a tablet: back up first and follow [reMarkable's instructions](https://developer.remarkable.com/documentation/developer-mode).
 
-- **Real Anki, not a viewer** — the actual `rslib` backend: a true `.anki2`
-  collection, the FSRS scheduler with per-grade interval previews, and genuine
-  **AnkiWeb sync** (incremental + automatic full-download recovery, media included).
-- **Pen whiteboard over every card** — low-latency A2-waveform inking with the
-  marker, pressure-sensitive width, working **eraser end**, stroke undo, and palm
-  rejection. Ink persists through Show Answer so you can compare, and clears on grade.
-- **LaTeX / MathJax math** — `\(...\)`, `\[...\]` and `[latex]` blocks render
-  on-device via a bundled MicroTeX helper: fractions, big operators, `\perp`,
-  `\stackrel`, `\boldsymbol`, blackboard/calligraphic letters. Inline math is
-  baseline-aligned with the text; display math renders at natural size. TikZ
-  diagrams appear via Anki desktop's own pre-rendered SVGs.
-- **Full card fidelity** — cards render with their own HTML/CSS templates (pure-Rust
-  blitz/stylo stack, embedded fonts), including images from your media collection.
-- **Two-finger scroll + pinch-zoom** — long cards pan with a two-finger drag
-  (fast partial refreshes while you move, one clean colour pass when you stop;
-  your ink scrolls with the card). Pinch snaps between 1.0×/1.25×/1.5×/2.0× with
-  a real reflow — text gets bigger *and rewraps to the card width*, so nothing
-  hangs off-screen. One finger on the card still does nothing (palm safety).
-  The zoom step you settle on is remembered: every later card (and the answer
-  side) opens at that level, across relaunches too.
-- **Home screen** — collapsible deck tree with due counts, review streak, and
-  tap-to-review any deck.
-- **Colour ↔ black-and-white toggle** — tap the deck counts (top-left) to flip
-  the whole frame between full colour and desaturated grayscale. Colour is great
-  for image-heavy decks; B&W renders text crisper on e-ink and avoids the colour
-  panel's slower settle. The mode is remembered across cards *and* relaunches,
-  and is unmissable when toggled (the grade bar changes with it — see the
-  screenshots above).
-- **Review chrome** — new/learning/review counts with an underline marking the
-  current card's queue; Undo (strokes first, then the last grade); an overflow menu
-  for **bury card / suspend note**; colour-e-ink-aware refresh (fast mono inking +
-  debounced colour settle, no flashing).
-- **Safe by construction** — an external AppLoad process talking to the QTFB
-  framebuffer. It cannot crash-loop xochitl or flip your boot bank.
+## Install
 
-## Install (device: reMarkable Paper Pro)
-
-1. Install [xovi](https://github.com/asivery/xovi) + [rm-appload](https://github.com/asivery/rm-appload) (free, one-time).
-2. Copy the app folder to `/home/root/xovi/exthome/appload/anki/`
-   (`ankimarkable`, `icon.png`, `external.manifest.json`).
-3. Copy `mathpng` to `/home/root/.ankimarkable/bin/mathpng` and the `microtex-res/`
-   folder to `/home/root/.ankimarkable/microtex-res/` (math support).
-4. Put your AnkiWeb credentials in `/home/root/.ankimarkable/ankiweb.txt`
-   (line 1: email, line 2: password), launch from the AppLoad menu, tap **Sync**.
-
-## Build (cross-compile from a Mac/Linux host)
+Download the application archive and `SHA256SUMS` from [Releases](https://github.com/aaronkazah/ankimarkable-pure/releases). Verify its checksum, then extract it:
 
 ```sh
-export PROTOC="$(command -v protoc)"          # protobuf compiler for anki's build
-cargo zigbuild --target aarch64-unknown-linux-musl --release
+tar -xzf ankimarkable-pure-0.1.0-paper-pure.tar.gz
+cd ankimarkable-pure
 ```
 
-The math helper (`tools/mathpng/`) builds against
-[MicroTeX](https://github.com/NanoMichael/MicroTeX) with Qt6 in an aarch64 SDK
-container — see `tools/mathpng/mathpng-build.sh`.
+Connect the tablet with a USB data cable. Its generated SSH password is under Settings → Help → Copyrights and licenses. Test the connection:
 
-## Environment knobs
+```sh
+ssh root@10.11.99.1
+```
 
-| Variable | Default | Meaning |
-|---|---|---|
-| `ANKIMARKABLE_COL` | `/home/root/.ankimarkable/collection.anki2` | collection path |
-| `ANKIMARKABLE_DECK` | `uni` | initial deck scope |
-| `AM_MATHPNG` | `/home/root/.ankimarkable/bin/mathpng` | math helper binary |
-| `AM_MATHPNG_RES` | `/home/root/.ankimarkable/microtex-res` | MicroTeX res fonts |
+Keep an existing XOVI/AppLoad installation. If the launcher is missing, back up your notebooks and run:
 
-Remembered settings (colour/B&W mode, zoom step) live in
-`/home/root/.ankimarkable/prefs`, a two-line `key=value` file written atomically
-on every change; delete it to reset to colour at 1.0×.
+```sh
+./scripts/install-launcher.sh root@10.11.99.1
+```
 
-## License
+Install the application and ensure the launcher is running:
 
-**AGPL-3.0** (see `LICENSE`) — required by the [Anki](https://github.com/ankitects/anki)
-`rslib` backend this links. Vendored `vendor/rex` is MIT/Apache-2.0;
-`tools/mathpng` builds against MIT-licensed MicroTeX; bundled fonts are OFL/MIT.
+```sh
+./scripts/install.sh root@10.11.99.1 .
+./scripts/start-launcher.sh root@10.11.99.1
+```
 
-A ready-made binary bundle is sold at
-[bazaar.abaj.ai/p/ankimarkable](https://bazaar.abaj.ai/p/ankimarkable) — buying it funds development;
-building from this source yourself is and will always be possible.
+Open the tablet sidebar → **AppLoad** → **Anki — Paper Pure**. Fresh installations include a separate demo deck with text, an image, math, and a cloze card. An Anki account is optional.
+
+Application files live under `/home/root/xovi/exthome/appload/ankimarkable-pure`. Cards and review progress live under `/home/root/.ankimarkable-pure`. Updates preserve the collection; close Anki before updating.
+
+Launcher configuration is temporary. After reboot, reMarkable starts its normal interface; run `scripts/start-launcher.sh` when you want AppLoad. This project does not flash firmware or install a permanent boot override.
+
+## Review cards
+
+1. Choose a deck.
+2. Write your answer in the card area.
+3. Tap **Show Answer** to compare your work with the answer.
+4. Choose **Again**, **Hard**, **Good**, or **Easy**. Anki schedules the next review.
+
+The toolbar provides Home, Undo, Eraser, Clear, Sync, and Exit. The Marker Plus eraser works too. Use two fingers to scroll long cards or pinch to change text size. The card menu lets you flag, bury, or suspend it. Close with **Exit** or AppLoad's swipe-down gesture.
+
+Scheduling uses Anki's backend, including FSRS when enabled in your collection. MathJax-style math and pre-rendered LaTeX SVGs are supported; releases bundle the math renderer and fonts. Sound playback, video, interactive JavaScript templates, and card authoring are not implemented.
+
+## Import without an account
+
+In Anki desktop, export a deck as `.apkg`, including media and scheduling to retain progress. Close Anki on the tablet before importing:
+
+```sh
+scp -O MyDeck.apkg root@10.11.99.1:/home/root/.ankimarkable-pure/import.apkg
+ssh root@10.11.99.1 \
+  '/home/root/xovi/exthome/appload/ankimarkable-pure/ankimarkable-pure-tools import /home/root/.ankimarkable-pure/collection.anki2 /home/root/.ankimarkable-pure/import.apkg'
+```
+
+Reopen the app to review. The tools also support `export COLLECTION PACKAGE.apkg`, `check COLLECTION`, and `preview COLLECTION DIRECTORY`.
+
+## Optional sync
+
+Back up the local Anki collection before connecting an account: an initial full download can replace the tablet's local cards. Sync does not touch reMarkable notebooks.
+
+```sh
+./scripts/configure-sync.sh root@10.11.99.1
+```
+
+The script prompts locally for your Anki username/password and saves them on the tablet in a root-only directory, in a file with permissions `600`. The password is plaintext inside the encrypted home partition; keep this file out of repositories and shared backups. Open Anki and tap **Sync** after configuration.
+
+AnkiWeb access by this independent client is unofficial and may be withdrawn. A self-hosted Anki sync server is the tested alternative. Add `ANKIMARKABLE_SYNC_ENDPOINT` to the `environment` object in `external.manifest.json`, using the server's base URL with a trailing slash, such as `https://anki.example.com/`. Configure that server's username/password with the same script, then restart the app.
+
+The client downloads when a full sync is required and permitted. Resolve an upload-only full sync in official Anki desktop first; this client never automatically performs a full upload.
+
+## Return to the stock interface
+
+Close Anki, then run:
+
+```sh
+ssh root@10.11.99.1 /home/root/xovi/stock
+```
+
+The Anki collection stays on the tablet. A reboot also returns to stock. To remove this app, close it and remove its directory under `xovi/exthome/appload`; keep `.ankimarkable-pure` to preserve cards and progress.
+
+## Build from source
+
+Install Docker with its engine running, then clone the source repository:
+
+```sh
+git clone https://github.com/aaronkazah/ankimarkable-pure.git
+cd ankimarkable-pure
+./scripts/test.sh
+./scripts/build.sh
+./scripts/install.sh root@10.11.99.1
+```
+
+The build uses ARM64 Linux containers, Rust 1.95.0, and the matching official Paper Pure SDK. Intel/x86 hosts need Docker's ARM64 emulation. Allocate at least 8 GB to Docker. The first build downloads dependencies and the SDK; later builds reuse caches. No host Xcode changes are needed.
+
+Outputs are `dist/ankimarkable-pure-0.1.0-paper-pure.tar.gz` and `dist/SHA256SUMS`. SDK, launcher, math sources, and Rust dependencies are pinned. See [testing](docs/TESTING.md) for coverage and device checks.
+
+## License and attribution
+
+**AGPL-3.0-or-later**, inherited from ankimarkable and the Anki backend. Retain the license and attribution with redistributed builds and provide the corresponding source and build instructions.
+
+- [ankimarkable](https://github.com/abaj8494/ankimarkable), by abaj8494: original application and pen whiteboard.
+- [Anki](https://github.com/ankitects/anki): collection, scheduling, import/export, and sync backend.
+- [AppLoad](https://github.com/asivery/rm-appload) and [XOVI](https://github.com/asivery/xovi), by asivery: launcher and display interface.
+- [MicroTeX](https://github.com/NanoMichael/MicroTeX) and [tinyxml2](https://github.com/leethomason/tinyxml2): math rendering, MIT and zlib licenses respectively.
+- Noto, XITS, and Nerd Fonts: licenses are in `assets/licenses` and the release's `licenses` folder.
+
+This project is not affiliated with or endorsed by reMarkable or Ankitects.

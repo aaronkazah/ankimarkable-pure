@@ -1,15 +1,4 @@
-//! Persisted user preferences.
-//!
-//! A tiny `key=value` file (`<DATA_DIR>/prefs`) so the choices you make while
-//! reviewing survive both the next card and the next launch:
-//!
-//! - `mono`     — colour (`0`) vs black-and-white (`1`) rendering, toggled by
-//!                tapping the top-left counts.
-//! - `zoom_idx` — index into `render::ZOOM_STEPS`; the pinch-zoom level you
-//!                settled on becomes the default every later card is laid out at.
-//!
-//! Written atomically (temp file + rename) so a crash mid-write can't leave a
-//! truncated file; any unreadable/garbled file just yields the defaults.
+//! Persisted pinch-zoom setting, written atomically.
 
 use std::io::Write;
 use std::path::Path;
@@ -18,13 +7,12 @@ use crate::render::ZOOM_STEPS;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Prefs {
-    pub mono: bool,
     pub zoom_idx: usize,
 }
 
 impl Default for Prefs {
     fn default() -> Self {
-        Prefs { mono: false, zoom_idx: 0 }
+        Prefs { zoom_idx: 0 }
     }
 }
 
@@ -44,9 +32,10 @@ impl Prefs {
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
-            let Some((k, v)) = line.split_once('=') else { continue };
+            let Some((k, v)) = line.split_once('=') else {
+                continue;
+            };
             match (k.trim(), v.trim()) {
-                ("mono", v) => p.mono = matches!(v, "1" | "true"),
                 ("zoom_idx", v) => {
                     if let Ok(i) = v.parse::<usize>() {
                         // Clamp so a file from a build with more steps can't index
@@ -61,10 +50,7 @@ impl Prefs {
     }
 
     fn serialize(&self) -> String {
-        format!(
-            "# ankimarkable preferences — edited by the app, safe to delete\nmono={}\nzoom_idx={}\n",
-            self.mono as u8, self.zoom_idx
-        )
+        format!("zoom_idx={}\n", self.zoom_idx)
     }
 
     /// Atomically write prefs to `path` (temp file in the same dir + rename).
@@ -85,7 +71,10 @@ impl Prefs {
     /// review session down with it.
     pub fn save_or_warn(&self, path: &Path) {
         if let Err(e) = self.save(path) {
-            eprintln!("ankimarkable: could not save prefs to {}: {e}", path.display());
+            eprintln!(
+                "ankimarkable: could not save prefs to {}: {e}",
+                path.display()
+            );
         }
     }
 }
@@ -100,13 +89,12 @@ mod tests {
         let path = dir.join("prefs");
         // Missing file → defaults.
         assert_eq!(Prefs::load(&path), Prefs::default());
-        let p = Prefs { mono: true, zoom_idx: 2 };
+        let p = Prefs { zoom_idx: 2 };
         p.save(&path).unwrap();
         assert_eq!(Prefs::load(&path), p);
         // Garbage / out-of-range values degrade gracefully.
-        std::fs::write(&path, "mono=maybe\nzoom_idx=99\nnonsense\n").unwrap();
+        std::fs::write(&path, "zoom_idx=99\nnonsense\n").unwrap();
         let q = Prefs::load(&path);
-        assert!(!q.mono);
         assert_eq!(q.zoom_idx, ZOOM_STEPS.len() - 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
