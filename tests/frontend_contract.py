@@ -143,6 +143,8 @@ FocusScope {
         }
         return true;
     }
+    property int saveCount: 0
+    function savePage() { saveCount++; }
     function hideResponse() { hideCount++; ready = false; }
     function closeDocument() { closeCount++; ready = false; }
 }
@@ -241,6 +243,7 @@ Rectangle {
             item("writingArea").openCount = 0;
             item("writingArea").closeCount = 0;
             item("writingArea").hideCount = 0;
+            item("writingArea").saveCount = 0;
         }
         function open() {
             app.applyState(front());
@@ -249,7 +252,11 @@ Rectangle {
         function reveal() {
             var back = front(); back.revealed = true; app.applyState(back);
         }
-        function test_reveal_expands_one_box_and_hides_writing() {
+        function test_reveal_keeps_writing_ready_above_ratings_data() {
+            return [{tag:"Compact",fraction:0.28},{tag:"Balanced",fraction:0.45},{tag:"Large",fraction:0.65}];
+        }
+        function test_reveal_keeps_writing_ready_above_ratings(data) {
+            app.writingFraction = data.fraction;
             open();
             var height = item("cardBox").height;
             verify(item("writingArea").visible);
@@ -263,20 +270,24 @@ Rectangle {
             compare(item("revealButton").text, "Show answer →");
             verify(!item("ratings").visible);
             reveal();
-            verify(item("cardBox").height > height + 400);
+            compare(item("cardBox").height, height - item("ratings").height);
             verify(item("questionImage").visible);
             verify(item("answerImage").visible);
             compare(item("questionImage").parent, item("answerImage").parent);
-            verify(!item("writingArea").visible);
+            verify(item("writingArea").visible);
+            verify(item("writingArea").ready);
+            compare(item("writingArea").y + item("writingArea").height, item("ratings").y);
             verify(!item("writingLoading").visible);
             verify(!item("revealButton").visible);
             verify(item("ratings").visible);
             compare(item("writingArea").closeCount, 0);
-            compare(item("writingArea").hideCount, 1);
+            compare(item("writingArea").hideCount, 0);
+            compare(item("writingArea").saveCount, 1);
+            compare(item("writingArea").openCount, 1);
         }
-        function test_rating_works_after_native_page_is_closed() {
-            open(); reveal();
-            verify(!item("writingArea").ready);
+        function test_rating_works_while_native_page_stays_ready() {
+            open(); item("writingArea").ready = true; reveal();
+            verify(item("writingArea").ready);
             mouseClick(item("ratings"), 875, 56);
             compare(item("bridge").lastRequest.action, "answer");
             compare(item("bridge").lastRequest.grade, "good");

@@ -1,6 +1,6 @@
 # Anki on reMarkable Paper Pure
 
-Read your Anki cards, write a response with the native reMarkable editor, show the answer, and rate your recall. The question and revealed answer share one card box. Revealing saves and hides the handwriting area, giving the card the full screen. The writing area has its native toolbar across the top and can be resized. **Preview cards** opens any card, including cards that are not due.
+Read your Anki cards, write a response with the native reMarkable editor, show the answer, and rate your recall. The question and revealed answer share one card box. Revealing keeps your attempt visible and writable beneath the answer, so you can compare it and add corrections. The writing area has its native toolbar across the top and can be resized. **Preview cards** opens any card, including cards that are not due.
 
 **0.4 preview:** the card layout, native input routing, visible test strokes, erasing, and saved handwriting have been checked on the supported tablet. Automated package transfer and local sync checks pass. Physical Marker latency and palm rejection still need acceptance.
 
@@ -21,7 +21,7 @@ After a rating, **Saved · Next card** confirms progress. **Saved · Same card: 
 
 All decks share one notebook named **Anki**. Tap it in your reMarkable library to open the flashcard app. Its permanent cover gives it a recognisable preview.
 
-The writing area is a scratchpad: it starts blank for every new attempt, including a repeated learning card, switching decks, or reopening the app. All cards reuse the same page, so practice does not create more notebooks or pages. Drag with two fingers to pan within that page. Separate multi-page answers are not supported. Showing the answer hides the scratchpad; the next attempt clears it. Earlier saved handwriting from previous app versions remains in the notebook.
+The writing area is a scratchpad: it starts blank for every new attempt, including a repeated learning card, switching decks, or reopening the app. All cards reuse the same page, so practice does not create more notebooks or pages. Drag with two fingers to pan within that page. Separate multi-page answers are not supported. Showing the answer preserves the scratchpad; the next attempt clears it. Earlier saved handwriting from previous app versions remains in the notebook.
 
 Flashcard questions, answers, and scheduling stay in Anki. The library file opens the app while AppLoad is running; after a stock restart it remains a normal notebook until you run `./ankipure start`.
 
@@ -117,7 +117,7 @@ Imports prepare both sides of every card before reopening the app. Existing prep
 
 ## Review or preview
 
-Choose **Review due →** beside a deck to review its due cards. Read **QUESTION** and write in **YOUR HANDWRITTEN RESPONSE** below it. Press the black **Show answer →** button at the bottom of the question box. Your writing is saved and the writing area disappears. The same box expands to show the original question, a divider, and **ANSWER** in one scroll. Choose **Again**, **Hard**, **Good**, or **Easy** at the bottom, shown in four gray shades with the next-review intervals. The writing area returns for the next question.
+Choose **Review due →** beside a deck to review its due cards. Read **QUESTION** and write in **YOUR HANDWRITTEN RESPONSE** below it. Press the black **Show answer →** button at the bottom of the question box. Your writing stays visible and editable. The card box shows the original question, a divider, and **ANSWER** in one scroll above the writing area. Choose **Again**, **Hard**, **Good**, or **Easy** at the bottom, shown in four gray shades with the next-review intervals. The writing area clears for the next question. Grade your original recall, not the corrected answer: choose **Again** if your attempt was wrong.
 
 If there are no due cards, the app says so and offers **Preview cards**. Preview also appears beside every deck. It shows every card with Previous/Next navigation and does not grade or change scheduling.
 

@@ -107,12 +107,14 @@ Rectangle {
             reviewNotice = "";
             if (next.kind !== "card") ratedCardId = "";
         }
-        if (next.kind === "card" && !next.revealed && (next.card_id !== model.card_id || model.kind !== "card" || model.revealed)) {
+        if (next.kind === "card" && (next.card_id !== model.card_id || model.kind !== "card" || (!next.revealed && model.revealed))) {
             nativeEditor.prepareCard();
             pendingNativeCard = next;
-        } else if (next.kind !== "card" || next.revealed) {
+        } else if (next.kind !== "card") {
             pendingNativeCard = null;
             nativeEditor.hideResponse();
+        } else if (next.revealed && !model.revealed) {
+            nativeEditor.savePage();
         }
         if (next.card_id !== model.card_id || next.revealed !== model.revealed)
             cardScroll.contentY = 0;
@@ -158,7 +160,7 @@ Rectangle {
         y: notesLabel.y
         width: root.width
         height: notesLabel.height
-        visible: root.model.kind === "card" && !root.model.revealed
+        visible: root.model.kind === "card"
         mode: Epaper.ScreenModeItem.UI
         z: 2
     }
@@ -438,7 +440,7 @@ Rectangle {
         x: 0
         y: header.height
         width: root.width
-        height: root.model.revealed ? root.height - header.height - ratingBar.height : notesLabel.y - header.height
+        height: notesLabel.y - header.height
         visible: root.model.kind === "card"
         color: "white"
         border.color: "#dddddd"
@@ -536,8 +538,8 @@ Rectangle {
         x: 24
         y: nativeEditor.y - height
         height: 44
-        visible: root.model.kind === "card" && !root.model.revealed
-        text: "YOUR HANDWRITTEN RESPONSE"
+        visible: root.model.kind === "card"
+        text: root.model.revealed ? "YOUR RESPONSE AND CORRECTIONS" : "YOUR HANDWRITTEN RESPONSE"
         font.pixelSize: 24
         verticalAlignment: Text.AlignVCenter
     }
@@ -546,10 +548,10 @@ Rectangle {
         id: nativeEditor
         objectName: "writingArea"
         x: 0
-        y: root.height - height
+        y: (ratingBar.visible ? ratingBar.y : root.height) - height
         width: root.width
         height: root.height * (Qt.inputMethod.visible ? Math.max(0.60, root.writingFraction) : root.writingFraction)
-        visible: root.model.kind === "card" && !root.model.revealed
+        visible: root.model.kind === "card"
         onNotebookCreated: bookId => root.send("record_notebook", {book_id: bookId})
         onSheetCreated: (cardId, bookId, pageId) => root.send("record_sheet", {
                 card_id: cardId,
