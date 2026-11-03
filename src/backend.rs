@@ -11,6 +11,7 @@ use anki::collection::{Collection, CollectionBuilder};
 use anki::decks::DeckId;
 use anki::scheduler::answering::{CardAnswer, Rating};
 use anki::scheduler::states::SchedulingStates;
+use anki::search::SearchNode;
 use anki::search::SortMode;
 use anki::sync::collection::normal::SyncActionRequired;
 use anki::sync::login::sync_login;
@@ -18,7 +19,8 @@ use anki::sync::media::progress::MediaSyncProgress;
 use anki::template::RenderedNode;
 use anki::timestamp::{TimestampMillis, TimestampSecs};
 use anki_proto::scheduler::bury_or_suspend_cards_request::Mode as BuryMode;
-use anyhow::Result;
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -80,6 +82,12 @@ pub struct SyncReport {
     pub removed: Option<String>,
     pub media: Option<String>,
     pub server_message: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SyncAccount {
+    pub hkey: String,
+    pub endpoint: Option<String>,
 }
 
 /// Which queue the current card came from — drives the underline under the
@@ -185,6 +193,7 @@ impl Backend {
             if node.name == "Default"
                 && node.new_count + node.learn_count + node.review_count == 0
                 && node.children.is_empty()
+                && self.card_ids_in_deck(DeckId(node.deck_id))?.is_empty()
             {
                 continue;
             }
@@ -238,11 +247,7 @@ impl Backend {
             _ => CardKind::Review,
         };
 
-        let out = self.col().render_existing_card(cid, false, false)?;
-        let q_html = self.math.preprocess(&nodes_to_html(&out.qnodes));
-        let a_html = self.math.preprocess(&nodes_to_html(&out.anodes));
-        let question = wrap_card(&out.css, &q_html);
-        let answer = wrap_card(&out.css, &a_html);
+        let (question, answer) = self.card_html(cid.0)?;
 
         let labels = self.col().describe_next_states(&qc.states)?;
         let button_labels = [
@@ -264,13 +269,57 @@ impl Backend {
         }))
     }
 
-    /// Render a specific card's (question, answer) HTML by card id — used by the
-    /// headless screen test to render a chosen notetype (e.g. "Pretty with Note").
+    /// Render a card's question and answer for reviewing or previewing.
     pub fn card_html(&mut self, cid: i64) -> Result<(String, String)> {
-        let out = self.col().render_existing_card(CardId(cid), false, false)?;
-        let q = self.math.preprocess(&nodes_to_html(&out.qnodes));
-        let a = self.math.preprocess(&nodes_to_html(&out.anodes));
+        self.render_card_html(cid, false)
+    }
+
+    pub(crate) fn study_card_html(&mut self, cid: i64) -> Result<(String, String)> {
+        self.render_card_html(cid, true)
+    }
+
+    fn render_card_html(&mut self, cid: i64, separate_answer: bool) -> Result<(String, String)> {
+        use anki::services::{CardsService, NotesService};
+        let out = self
+            .col()
+            .render_existing_card(CardId(cid), false, separate_answer)?;
+        let card = CardsService::get_card(self.col(), anki_proto::cards::CardId { cid })?;
+        let note =
+            NotesService::get_note(self.col(), anki_proto::notes::NoteId { nid: card.note_id })?;
+        let notetype = self
+            .col()
+            .get_notetype(note.notetype_id.into())?
+            .context("Card note type is missing")?;
+        let fields: std::collections::HashMap<&str, &str> = notetype
+            .fields
+            .iter()
+            .zip(&note.fields)
+            .map(|(field, value)| (field.name.as_str(), value.as_str()))
+            .collect();
+        let question = resolve_typed_answer(
+            &nodes_to_html(&out.qnodes, false),
+            &fields,
+            card.template_idx as u16,
+            false,
+        );
+        let answer = resolve_typed_answer(
+            &nodes_to_html(&out.anodes, separate_answer),
+            &fields,
+            card.template_idx as u16,
+            true,
+        );
+        let q = self.math.preprocess(&question);
+        let a = self.math.preprocess(&answer);
         Ok((wrap_card(&out.css, &q), wrap_card(&out.css, &a)))
+    }
+
+    pub fn card_ids_in_deck(&mut self, deck_id: DeckId) -> Result<Vec<i64>> {
+        Ok(self
+            .col()
+            .search_cards(SearchNode::DeckIdWithChildren(deck_id), SortMode::NoOrder)?
+            .into_iter()
+            .map(|id| id.0)
+            .collect())
     }
 
     /// Undo the last undoable operation (e.g. the previous grade) so the card comes
@@ -327,15 +376,31 @@ impl Backend {
         Ok(())
     }
 
-    /// Sync with AnkiWeb: login → collection sync → media sync.
-    ///
-    /// If AnkiWeb requires a full sync, we auto-resolve by **downloading** — this is
-    /// a review-only client whose on-device collection is disposable, so pulling
-    /// AnkiWeb's authoritative copy is always the right (and safe) resolution. We
-    /// never auto-*upload* (that could clobber AnkiWeb), so an upload-only full sync
-    /// is surfaced for the user to resolve on desktop. This is what lets a stale or
-    /// freshly-provisioned device fetch the collection on first sync.
+    /// Login and synchronize cards, scheduling, and media.
     pub fn sync(&mut self, username: &str, password: &str) -> Result<SyncReport> {
+        let account = Self::login(
+            username,
+            password,
+            std::env::var("ANKIMARKABLE_SYNC_ENDPOINT").ok(),
+        )?;
+        self.sync_account(&account)
+    }
+
+    pub fn login(username: &str, password: &str, endpoint: Option<String>) -> Result<SyncAccount> {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?;
+        let client = reqwest::Client::builder().http1_only().no_proxy().build()?;
+        let auth = rt
+            .block_on(sync_login(username, password, endpoint.clone(), client))
+            .map_err(describe_sync_error)?;
+        Ok(SyncAccount {
+            hkey: auth.hkey,
+            endpoint,
+        })
+    }
+
+    pub fn sync_account(&mut self, account: &SyncAccount) -> Result<SyncReport> {
         use anki::services::CollectionService; // for latest_progress()
         let rt = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -344,18 +409,11 @@ impl Backend {
         // HTTP(S)_PROXY env vars by default — a proxy inherited from the launching
         // shell/appload env would silently reroute AnkiWeb traffic and fail.
         let client = reqwest::Client::builder().http1_only().no_proxy().build()?;
-        let endpoint = std::env::var("ANKIMARKABLE_SYNC_ENDPOINT").ok();
-        let mut auth = rt
-            .block_on(sync_login(
-                username,
-                password,
-                endpoint.clone(),
-                client.clone(),
-            ))
-            .map_err(describe_sync_error)?;
-        if let Some(endpoint) = endpoint {
-            auth.endpoint = Some(endpoint.parse()?);
-        }
+        let auth = anki::sync::login::SyncAuth {
+            hkey: account.hkey.clone(),
+            endpoint: account.endpoint.as_deref().map(str::parse).transpose()?,
+            ..Default::default()
+        };
 
         // 1) Collection sync.
         let out = rt
@@ -381,6 +439,36 @@ impl Backend {
             SyncActionRequired::NormalSyncRequired => "synced",
             SyncActionRequired::FullSyncRequired { download_ok, .. } => {
                 if download_ok {
+                    let mut recovery = None;
+                    if !self.col().search_cards("", SortMode::NoOrder)?.is_empty() {
+                        use std::os::unix::fs::PermissionsExt;
+                        let directory = Path::new(&self.col_path)
+                            .parent()
+                            .unwrap()
+                            .join(".sync-backups");
+                        std::fs::create_dir_all(&directory)?;
+                        std::fs::set_permissions(
+                            &directory,
+                            std::fs::Permissions::from_mode(0o700),
+                        )?;
+                        let package = directory
+                            .join(format!("before-download-{}.apkg", TimestampMillis::now().0));
+                        self.col().export_apkg(
+                            package.to_str().unwrap(),
+                            anki_proto::import_export::ExportAnkiPackageOptions {
+                                with_scheduling: true,
+                                with_deck_configs: true,
+                                with_media: true,
+                                legacy: false,
+                            },
+                            "",
+                            None,
+                        )?;
+                        std::fs::set_permissions(package, std::fs::Permissions::from_mode(0o600))?;
+                        recovery = Some(
+                            "A recovery export was saved before replacing local cards.".into(),
+                        );
+                    }
                     // AnkiWeb shards accounts across hosts; `normal_sync` follows the
                     // redirect for its own requests and reports the sharded endpoint in
                     // `new_endpoint`. A fresh `full_download` builds a new client from
@@ -403,7 +491,7 @@ impl Backend {
                     res.map_err(describe_sync_error)?;
                     // The normal-sync counts captured above are moot — the whole
                     // collection was replaced, not incrementally merged.
-                    report.added = None;
+                    report.added = recovery;
                     report.removed = None;
                     "downloaded"
                 } else {
@@ -451,15 +539,95 @@ fn describe_sync_error(e: anki::error::AnkiError) -> anyhow::Error {
 /// Join Anki's rendered template nodes into an HTML string. The template engine
 /// has already substituted fields and applied filters, so Text and Replacement
 /// both contribute literal HTML.
-fn nodes_to_html(nodes: &[RenderedNode]) -> String {
+fn nodes_to_html(nodes: &[RenderedNode], omit_front_side: bool) -> String {
     let mut s = String::new();
     for n in nodes {
         match n {
             RenderedNode::Text { text } => s.push_str(text),
-            RenderedNode::Replacement { current_text, .. } => s.push_str(current_text),
+            RenderedNode::Replacement {
+                field_name,
+                current_text,
+                ..
+            } => {
+                if !omit_front_side || field_name != "FrontSide" {
+                    s.push_str(current_text);
+                }
+            }
         }
     }
     s
+}
+
+fn resolve_typed_answer(
+    html: &str,
+    fields: &std::collections::HashMap<&str, &str>,
+    ordinal: u16,
+    revealed: bool,
+) -> String {
+    static TYPE_ANSWER: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"\[\[type:([^\]]+)\]\]").unwrap());
+    TYPE_ANSWER
+        .replace_all(html, |captures: &regex::Captures| {
+            if !revealed {
+                return String::new();
+            }
+            let field = &captures[1];
+            if let Some(name) = field.strip_prefix("cloze:") {
+                anki::cloze::extract_cloze_for_typing(
+                    fields.get(name).copied().unwrap_or(""),
+                    ordinal + 1,
+                )
+                .into_owned()
+            } else {
+                fields.get(field).copied().unwrap_or("").to_owned()
+            }
+        })
+        .into_owned()
+}
+
+#[cfg(test)]
+mod typed_card_tests {
+    use super::*;
+
+    #[test]
+    fn typed_cards_hide_the_input_and_reveal_the_correct_answer_in_review_and_preview() {
+        let folder = std::env::temp_dir().join(format!("pure-typed-card-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        let path = folder.join("collection.anki2");
+        let mut collection = open_collection(&path).unwrap();
+        let kind = collection
+            .get_notetype_by_name("Basic (type in the answer)")
+            .unwrap()
+            .unwrap();
+        let mut kind = (*kind).clone();
+        kind.templates[0].config.a_format = "{{FrontSide}}<hr id=answer>{{Back}}".into();
+        collection.update_notetype(&mut kind, false).unwrap();
+        let deck = collection.get_or_create_normal_deck("Typed").unwrap();
+        let mut note = kind.new_note();
+        note.set_field(0, "What is six times seven?").unwrap();
+        note.set_field(1, "Forty two").unwrap();
+        collection.add_note(&mut note, deck.id).unwrap();
+        drop(collection);
+        let mut backend = Backend::open(path.to_str().unwrap()).unwrap();
+        backend.set_deck_scope("Typed").unwrap();
+        let card = backend.next_card().unwrap().unwrap();
+        assert!(!card.question_html.contains("[[type:"));
+        assert!(!card.question_html.contains("Forty two"));
+        assert!(card.answer_html.contains("Forty two"));
+        assert!(!card.answer_html.contains("[[type:"));
+        assert_eq!(
+            backend.card_html(card.card_id.0).unwrap(),
+            (card.question_html, card.answer_html)
+        );
+        let (question, answer) = backend.study_card_html(card.card_id.0).unwrap();
+        assert!(question.contains("What is six times seven?"));
+        assert!(!question.contains("Forty two"));
+        assert!(!answer.contains("What is six times seven?"));
+        assert_eq!(answer.matches("Forty two").count(), 1);
+        assert!(!answer.contains("[[type:"));
+        drop(backend);
+        std::fs::remove_dir_all(folder).unwrap();
+    }
 }
 
 /// Wrap a card side in the same shell Anki's webview uses: the notetype CSS in a

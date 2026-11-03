@@ -34,7 +34,7 @@ const DISPLAY_SCALE: f32 = 0.50;
 // SVG raster scale for the pre-rendered Anki `[latex]` path.
 const RASTER_SCALE: f32 = 3.5;
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct Rendered {
     uri: String,
     // Cropped (ink-tight) pixel dimensions.
@@ -109,14 +109,20 @@ impl MathRenderer {
         // ONE mathpng invocation (amortises the engine init across the card).
         let mut todo: Vec<(String, bool)> = Vec::new();
         {
-            let cache = self.math_cache.borrow();
+            let mut cache = self.math_cache.borrow_mut();
             let mut seen: HashSet<u64> = HashSet::new();
             for c in self.re_math.captures_iter(&out) {
                 let inline = c.get(1).is_some();
                 let tex = span_tex(&c);
                 let key = tex_key(&tex, inline);
                 if !cache.contains_key(&key) && seen.insert(key) {
-                    todo.push((tex, inline));
+                    let saved = std::fs::read(self.cache_dir.join(format!("{key:016x}.json"))).ok()
+                        .and_then(|bytes| serde_json::from_slice::<Rendered>(&bytes).ok());
+                    if let Some(rendered) = saved {
+                        cache.insert(key, Some(rendered));
+                    } else {
+                        todo.push((tex, inline));
+                    }
                 }
             }
         }
@@ -208,6 +214,15 @@ impl MathRenderer {
                     w,
                     h,
                 });
+            if let Some(rendered) = &done {
+                if let Ok(bytes) = serde_json::to_vec(rendered) {
+                    let path = self.cache_dir.join(format!("{key:016x}.json"));
+                    let temporary = path.with_extension("tmp");
+                    if std::fs::write(&temporary, bytes).is_ok() {
+                        let _ = std::fs::rename(temporary, path);
+                    }
+                }
+            }
             cache.insert(key, done);
         }
         // Anything the helper never answered for -> failed (leave raw).
@@ -247,7 +262,7 @@ fn span_tex(c: &regex::Captures) -> String {
         .or_else(|| c.get(2))
         .map(|m| m.as_str())
         .unwrap_or("");
-    alias_macros(raw)
+    alias_macros(&anki::text::decode_entities(raw))
 }
 
 /// microtex (clatexmath) covers the AMS/unicode-math commands the math engine supports, so we
@@ -484,4 +499,31 @@ fn base64_encode(data: &[u8]) -> String {
         });
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn escaped_apostrophes_are_decoded_before_parsing_math() {
+        let renderer = MathRenderer::new(PathBuf::new());
+        let captures = renderer.re_math.captures(r"\(f&#x27;(t)\)").unwrap();
+        assert_eq!(span_tex(&captures), "f'(t)");
+    }
+
+    #[test]
+    fn persisted_math_is_reused_without_starting_the_helper() {
+        let directory = std::env::temp_dir().join(format!("pure-math-cache-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let rendered = Rendered { uri: "data:image/png;base64,cached".into(), w: 20.0, h: 20.0 };
+        let key = tex_key("x", true);
+        std::fs::write(directory.join(format!("{key:016x}.json")), serde_json::to_vec(&rendered).unwrap()).unwrap();
+        let mut renderer = MathRenderer::new(PathBuf::new());
+        renderer.enabled = true;
+        renderer.cache_dir = directory.clone();
+        renderer.mathpng = PathBuf::from("/nonexistent-helper");
+        assert!(renderer.preprocess(r"\(x\)").contains("data:image/png;base64,cached"));
+        std::fs::remove_dir_all(directory).unwrap();
+    }
 }

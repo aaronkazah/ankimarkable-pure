@@ -1,0 +1,98 @@
+VERSION 3.28.0.172
+AFFECT /qml/device/view/navigator/Navigator.qml
+    IMPORT net.asivery.AppLoad 1.0
+    TRAVERSE FocusScope
+        LOCATE AFTER ALL
+        INSERT {
+            AppLoadLibrary { id: ankiPureCliLibrary }
+            Timer {
+                interval: 500
+                running: true
+                repeat: true
+                property string lastNonce: ""
+                function readCommand() {
+                    const request = new XMLHttpRequest();
+                    request.open("GET", "file:///home/root/.ankimarkable-pure/launcher-command.json", false);
+                    request.send();
+                    try { return JSON.parse(request.responseText); } catch (error) { return {}; }
+                }
+                onTriggered: {
+                    const command = readCommand();
+                    if (!command.nonce || command.nonce === lastNonce) return;
+                    lastNonce = command.nonce;
+                    let ok = true;
+                    let message = "";
+                    if (command.action === "reload") {
+                        ok = ankiPureCliLibrary.reloadList() > 0;
+                        message = ok ? "Application list refreshed" : "Close AppLoad applications before updating";
+                    } else if (command.action === "open") {
+                        ok = false;
+                        for (let app of ankiPureCliLibrary.applications) {
+                            if (app.id === "ankimarkable-pure") {
+                                AppLoadLauncher.launchApplication(app.id, [], {}, false);
+                                ok = true;
+                                break;
+                            }
+                        }
+                        message = ok ? "Anki opened" : "Refresh the application list first";
+                    } else {
+                        ok = false;
+                        message = "Unknown launcher action";
+                    }
+                    console.log("AnkiPureCLI:" + command.nonce + ":" + (ok ? "ok" : "error") + ":" + message);
+                }
+            }
+        }
+    END TRAVERSE
+END AFFECT
+
+AFFECT /qml/device/view/main/MainView.qml
+    IMPORT net.asivery.AppLoad 1.0
+    TRAVERSE Background
+        LOCATE AFTER ALL
+        INSERT {
+            AppLoadLibrary { id: ankiPureNotebookLibrary }
+            function ankiNotebookId() {
+                const request = new XMLHttpRequest();
+                request.open("GET", "file:///home/root/.ankimarkable-pure/native-notes.json", false);
+                request.send();
+                try { return JSON.parse(request.responseText).book_id; } catch (error) { return null; }
+            }
+            function openAnkiNotebook(entry) {
+                if (!entry || String(entry.id) !== ankiNotebookId()) return false;
+                for (let app of ankiPureNotebookLibrary.applications) {
+                    if (app.id === "ankimarkable-pure") {
+                        AppLoadLauncher.launchApplication(app.id, [], {}, false);
+                        return true;
+                    }
+                }
+                return false;
+            }
+        }
+        REBUILD openDocument_helper
+            LOCATE BEFORE ALL
+            INSERT STREAM / if (openAnkiNotebook(entry)) return; /
+        END REBUILD
+    END TRAVERSE
+END AFFECT
+
+AFFECT /qml/device/view/navigator/Sidebar.qml
+    IMPORT net.asivery.AppLoad 1.0
+    TRAVERSE FocusScope > ColumnLayout#filterColumn
+        LOCATE AFTER ArkControls.SidebarItem#filterMyFiles
+        INSERT {
+            ArkControls.SidebarItem {
+                id: openAnkiPure
+                objectName: "openAnkiPure"
+                text: "Anki"
+                iconSource: "qrc:/ark/icons/my_files"
+                enabled: true
+                onClicked: {
+                    root.hide();
+                    AppLoadLauncher.launchApplication("ankimarkable-pure", [], {}, false);
+                }
+                Layout.preferredWidth: parent.width
+            }
+        }
+    END TRAVERSE
+END AFFECT

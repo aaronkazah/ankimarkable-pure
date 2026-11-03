@@ -5,7 +5,7 @@ host=${1:-root@10.11.99.1}
 bundle=${2:-$root/dist/ankimarkable-pure}
 ssh_options=(-o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=3)
 if [[ -n ${SSH_CONTROL_PATH:-} ]]; then ssh_options+=(-S "$SSH_CONTROL_PATH"); fi
-for file in ankimarkable-pure ankimarkable-pure-tools mathpng external.manifest.json icon.png LICENSE; do
+for file in ankimarkable-pure ankimarkable-pure-tools mathpng manifest.json resources.rcc launcher-control.qmd backend/entry icon.png LICENSE; do
   [[ -s "$bundle/$file" ]] || { printf 'Missing bundle file: %s\n' "$file" >&2; exit 1; }
 done
 identity=$(ssh "${ssh_options[@]}" "$host" 'printf "%s|%s|" "$(hostname)" "$(uname -m)"; sed -n '\''s/^IMG_VERSION="\(.*\)"/\1/p'\'' /etc/os-release')
@@ -29,11 +29,13 @@ ssh "${ssh_options[@]}" "$host" sh -s -- "$stage" <<'REMOTE'
 set -eu
 stage=$1
 app=/home/root/xovi/exthome/appload/ankimarkable-pure
-for file in ankimarkable-pure ankimarkable-pure-tools mathpng external.manifest.json icon.png LICENSE; do
+for file in ankimarkable-pure ankimarkable-pure-tools mathpng manifest.json resources.rcc launcher-control.qmd backend/entry icon.png LICENSE; do
   test -s "$stage/$file" || { echo "Incomplete transfer: $file" >&2; exit 1; }
 done
-if test -f "$app/external.manifest.json"; then cp "$app/external.manifest.json" "$stage/external.manifest.json"; fi
-chmod 755 "$stage/ankimarkable-pure" "$stage/ankimarkable-pure-tools" "$stage/mathpng"
+if test -f "$app/external.manifest.json"; then
+  "$stage/ankimarkable-pure-tools" migrate-config "$app/external.manifest.json" /home/root/.ankimarkable-pure
+fi
+chmod 755 "$stage/ankimarkable-pure" "$stage/ankimarkable-pure-tools" "$stage/mathpng" "$stage/backend/entry"
 chown -R root:root "$stage"
 collection=/home/root/.ankimarkable-pure/collection.anki2
 if test ! -f "$collection"; then "$stage/ankimarkable-pure-tools" create-demo "$collection"; fi
@@ -46,5 +48,11 @@ if ! mv "$stage" "$app"; then
   echo 'Could not activate the new application.' >&2; exit 1
 fi
 test ! -d "$previous" || rm -rf "$previous"
-echo 'Installed. Open AppLoad, then Anki — Paper Pure.'
+hook=/home/root/xovi/exthome/qt-resource-rebuilder/ankimarkable-pure-control.qmd
+first_hook=0
+cmp -s "$app/launcher-control.qmd" "$hook" || first_hook=1
+cp "$app/launcher-control.qmd" "$hook"
+test -f /home/root/.ankimarkable-pure/launcher-command.json || printf '{}\n' > /home/root/.ankimarkable-pure/launcher-command.json
+if test "$first_hook" = 1; then systemctl restart xochitl; fi
+echo 'Installed. The CLI will open Anki.'
 REMOTE

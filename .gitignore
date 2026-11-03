@@ -1,7 +1,9 @@
 /.env
 /.env.*
 /dist/
+/frontend/resources.rcc
 /.backups/
+/exports/
 /.cache/
 /.ssh/
 *.log
@@ -10,6 +12,7 @@
 *.apkg
 *.media/
 ankiweb.txt
+sync-auth.json
 # Rust build output (~2 GB: aarch64-musl release artifacts + vendored rslib).
 /target/
 /vendor/**/target/

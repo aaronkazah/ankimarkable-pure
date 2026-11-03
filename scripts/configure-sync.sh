@@ -7,6 +7,6 @@ read -r -p 'Anki username/email: ' username
 read -r -s -p 'Anki password: ' password
 printf '\n'
 printf '%s\n%s\n' "$username" "$password" | ssh "${ssh_options[@]}" "$host" \
-  'umask 077; mkdir -p /home/root/.ankimarkable-pure; chmod 700 /home/root/.ankimarkable-pure; cat > /home/root/.ankimarkable-pure/ankiweb.txt; chmod 600 /home/root/.ankimarkable-pure/ankiweb.txt'
+  '/home/root/xovi/exthome/appload/ankimarkable-pure/ankimarkable-pure-tools configure-sync /home/root/.ankimarkable-pure'
 unset password
-printf 'Credentials saved privately on the tablet. Open Anki and tap Sync.\n'
+printf 'Open Anki and tap Sync, or run ./ankipure sync.\n'

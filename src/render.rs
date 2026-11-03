@@ -143,7 +143,7 @@ impl Renderer {
         zoom_idx: usize,
         bold_text: bool,
     ) -> CardView {
-        let mut paper_html = format!("{html}<style>html,body,.card{{background:#fff!important;color:#000!important;}}</style>");
+        let mut paper_html = format!("{html}<style>html,body,.card{{background:#fff!important;color:#000!important;}} body,.card,main{{font-size:36px!important;line-height:1.55!important;}} aside{{font-size:30px!important;}}</style>");
         if bold_text {
             paper_html.push_str("<style>body,.card,.card *{font-weight:700!important;}</style>");
         }
@@ -256,6 +256,17 @@ impl CardView {
     pub fn paint_window(&self) -> Vec<u8> {
         let scale = self.doc.viewport().scale() as f64;
         paint_document(&self.doc, scale, self.width, self.height)
+    }
+
+    pub(crate) fn paint_height(mut self, height: u32) -> Vec<u8> {
+        if height != self.height {
+            let mut viewport = Viewport::new(self.width, height, 1.0, ColorScheme::Light);
+            viewport.set_zoom(self.zoom());
+            self.doc.set_viewport(viewport);
+            self.doc.resolve(0.0);
+        }
+        let scale = self.doc.viewport().scale() as f64;
+        paint_document(&self.doc, scale, self.width, height)
     }
 }
 
@@ -523,6 +534,19 @@ fn base64_decode(s: &str) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn full_height_reuses_layout_and_preserves_height_dependent_styles() {
+        let renderer = Renderer::new();
+        let html = "<body style='margin:0'><div style='position:absolute;top:75vh;background:black;width:40px;height:20px'></div></body>";
+        let measured = renderer
+            .build_card_view_at(html, 100, 100, 0, false)
+            .paint_height(300);
+        let direct = renderer
+            .build_card_view_at(html, 100, 300, 0, false)
+            .paint_window();
+        assert_eq!(measured, direct);
+    }
 
     #[test]
     fn bold_card_text_has_heavier_ink_without_changing_to_a_dark_background() {

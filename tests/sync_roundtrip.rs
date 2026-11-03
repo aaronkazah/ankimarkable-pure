@@ -40,8 +40,27 @@ fn self_hosted_sync_downloads_decks_and_uploads_reviews() {
     let mut backend = Backend::open(seed.to_str().unwrap()).unwrap();
     backend.sync("demo@example.test", "test-password").unwrap();
     drop(backend);
+    demo::create(&target).unwrap();
+    let connection = rusqlite::Connection::open(&target).unwrap();
+    connection
+        .execute("update col set scm=scm+100000", [])
+        .unwrap();
+    drop(connection);
     let mut tablet = Backend::open(target.to_str().unwrap()).unwrap();
-    tablet.sync("demo@example.test", "test-password").unwrap();
+    let account =
+        Backend::login("demo@example.test", "test-password", Some(endpoint.clone())).unwrap();
+    let saved = serde_json::to_string(&account).unwrap();
+    assert!(!saved.contains("test-password"));
+    let account = serde_json::from_str(&saved).unwrap();
+    tablet.sync_account(&account).unwrap();
+    let backups: Vec<_> = std::fs::read_dir(directory.join(".sync-backups"))
+        .unwrap()
+        .collect();
+    assert_eq!(
+        backups.len(),
+        1,
+        "Full download must preserve the previous local collection"
+    );
     tablet.set_deck_scope(demo::DECK_NAME).unwrap();
     assert_eq!(tablet.counts().unwrap().new, 5);
     assert!(target
@@ -50,7 +69,7 @@ fn self_hosted_sync_downloads_decks_and_uploads_reviews() {
         .is_file());
     let card = tablet.next_card().unwrap().unwrap();
     tablet.answer(&card, Grade::Good).unwrap();
-    tablet.sync("demo@example.test", "test-password").unwrap();
+    tablet.sync_account(&account).unwrap();
     drop(tablet);
     let mut desktop = Backend::open(seed.to_str().unwrap()).unwrap();
     desktop.sync("demo@example.test", "test-password").unwrap();

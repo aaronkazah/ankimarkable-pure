@@ -1,10 +1,10 @@
 [package]
 name = "ankimarkable-pure"
-version = "0.2.0"
+version = "0.4.0"
 edition = "2021"
 license = "AGPL-3.0-or-later"
 default-run = "ankimarkable-pure"
-description = "Anki review client for the reMarkable Paper Pure (AppLoad/QTFB app)"
+description = "Anki reviews with the native reMarkable Paper Pure editor"
 
 
 [dependencies]
@@ -23,6 +23,8 @@ png = "0.17"
 reqwest = { version = "0.12", default-features = false }
 tokio = { version = "1", features = ["rt-multi-thread"] }
 anyhow = "1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 libc = "0.2"
 
 rusqlite = { version = "0.36", features = ["bundled"] }
