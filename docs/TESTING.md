@@ -34,7 +34,7 @@ Use Paper Pure firmware **3.28.0.172** and AppLoad **0.6.0**. Native editor chan
 8. Review cards in two different decks, then close the app. Check that there is one **Anki** notebook with its cover and no additional pages per review. Tap the Anki notebook and confirm it opens the app directly.
 9. Confirm normal reMarkable notebooks still open and write correctly after closing Anki.
 
-The current build passes the Rust collection, package, and localhost sync tests and 46 QML checks, including seven real interface-to-database workflows. They cover all ratings, progress, undo, same-card learning repeats, a shared scratchpad, a text-free loading indicator, and library shortcut routing.
+The current build passes the Rust collection, package, and localhost sync tests and 47 QML checks, including seven real interface-to-database workflows. They cover all ratings, progress, undo, same-card learning repeats, a shared scratchpad, a text-free loading indicator, and library shortcut routing.
 
 On-device checks use an isolated collection and terminal-injected Marker events. They verify visible first strokes, clearing strokes across layers and typed text, retaining the editor through reveal, reuse of the same scratch page, and clearing on a real same-card Again repeat. Tapping the library notebook launches the app directly. Reopening the normal collection uses the same empty scratchpad without creating a page. Historical saved pages are checked against a private backup. Physical Marker latency, palm rejection, and black-flash counts remain manual acceptance checks.
 

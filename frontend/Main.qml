@@ -200,35 +200,61 @@ Rectangle {
             flat: true
             onClicked: root.send("home")
         }
-        Text {
+        Column {
             anchors.left: homeButton.right
-            anchors.right: writingSizeButton.visible ? writingSizeButton.left : (menuButton.visible ? menuButton.left : closeButton.left)
+            anchors.right: settingsButton.left
             anchors.margins: 20
             anchors.verticalCenter: parent.verticalCenter
-            font.pixelSize: 34
-            font.bold: true
-            text: root.model.deck_name || "Anki"
-            elide: Text.ElideRight
-            horizontalAlignment: Text.AlignHCenter
+            spacing: 2
+            Text {
+                objectName: "deckTitle"
+                width: parent.width
+                font.pixelSize: 34
+                font.bold: true
+                text: (root.model.deck_name || "Anki").split("::").pop()
+                elide: Text.ElideRight
+                horizontalAlignment: Text.AlignHCenter
+            }
+            Text {
+                objectName: "deckSubtitle"
+                width: parent.width
+                visible: root.model.kind === "card"
+                font.pixelSize: 24
+                text: {
+                    const path = (root.model.deck_name || "").split("::");
+                    const context = path.length > 1 ? path.slice(0, -1).join(" / ") + " · " : "";
+                    return context + (root.model.preview
+                        ? "Preview " + root.model.preview.number + " of " + root.model.preview.total
+                        : "Scheduled review");
+                }
+                elide: Text.ElideRight
+                horizontalAlignment: Text.AlignHCenter
+            }
         }
         PaperButton {
-            id: writingSizeButton
-            objectName: "writingSizeButton"
-            visible: root.model.kind === "card" && !root.model.revealed
+            id: settingsButton
+            objectName: "settingsButton"
             anchors.right: menuButton.visible ? menuButton.left : closeButton.left
             anchors.verticalCenter: parent.verticalCenter
-            text: "Writing space"
-            width: 230
+            text: "Settings"
+            width: 180
             height: 80
             font.pixelSize: 28
             flat: true
-            onClicked: writingSizeMenu.open()
+            onClicked: settingsMenu.open()
         }
         Menu {
-            id: writingSizeMenu
+            id: settingsMenu
+            objectName: "settingsMenu"
             font.pixelSize: 30
-            x: Math.max(0, writingSizeButton.x + writingSizeButton.width - width)
+            x: Math.max(0, settingsButton.x + settingsButton.width - width)
             y: header.height
+            MenuItem {
+                text: "Writing area size"
+                font.bold: true
+                enabled: false
+            }
+            MenuSeparator {}
             MenuItem {
                 objectName: "writingSizeCompact"
                 text: "Compact"
@@ -429,18 +455,11 @@ Rectangle {
             font.pixelSize: 24
             text: root.reviewNotice
         }
-        Label {
-            anchors.right: parent.right
-            anchors.rightMargin: 24
-            y: 14
-            font.pixelSize: 24
-            text: root.model.preview ? "Preview · " + root.model.preview.number + " of " + root.model.preview.total : "Review · scheduled practice"
-        }
         Flickable {
             id: cardScroll
             objectName: "cardScroll"
             x: 24
-            y: 52
+            y: root.reviewNotice ? 52 : 24
             width: parent.width - 48
             height: parent.height - y - (root.model.revealed ? 24 : 124)
             clip: true

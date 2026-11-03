@@ -35,13 +35,21 @@ Rectangle {
         }
         function test_writing_area_sizes_preserve_the_current_card() {
             app.applyState({kind:"card",card_id:"1",revealed:false,preview:{number:1,total:1},question_image:"",answer_image:""});
-            verify(item("writingSizeButton").visible);
+            verify(item("settingsButton").visible);
             item("writingSizeLarge").triggered();
             compare(item("writingArea").height,app.height*0.65);
             compare(app.model.card_id,"1");
             item("writingSizeCompact").triggered();
             compare(item("writingArea").height,app.height*0.28);
             compare(item("bridge").lastRequest,null);
+        }
+        function test_settings_are_available_on_home_and_answers() {
+            verify(item("settingsButton").visible);
+            compare(item("settingsButton").text,"Settings");
+            app.applyState({kind:"card",card_id:"1",deck_name:"Tiny AI Lab::01 Foundations::03 Linear regression",revealed:true,preview:{number:2,total:11},question_image:"",answer_image:""});
+            verify(item("settingsButton").visible);
+            compare(item("deckTitle").text,"03 Linear regression");
+            compare(item("deckSubtitle").text,"Tiny AI Lab / 01 Foundations · Preview 2 of 11");
         }
         function test_no_cloud_sync_button() {
             compare(item("syncButton"), null);
