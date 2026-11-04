@@ -44,7 +44,7 @@ struct Rendered {
 
 pub struct MathRenderer {
     mathpng: PathBuf,
-    res: String,
+    res: PathBuf,
     cache_dir: PathBuf,
     media_dir: PathBuf,
     // tex-hash -> Some(Rendered) | None (unrenderable — leave raw source).
@@ -57,23 +57,21 @@ pub struct MathRenderer {
 
 impl MathRenderer {
     pub fn new(media_dir: PathBuf) -> Self {
-        let mathpng = PathBuf::from(env_or(
-            "AM_MATHPNG",
-            "/home/root/.ankimarkable-pure/bin/mathpng",
-        ));
-        let res = env_or(
-            "AM_MATHPNG_RES",
-            "/home/root/.ankimarkable-pure/microtex-res",
-        );
+        // The helper and its fonts are installed beside both executables, so the
+        // app and the CLI's card preparation render math identically.
+        let bundle = std::env::current_exe()
+            .ok()
+            .and_then(|executable| executable.parent().map(PathBuf::from))
+            .unwrap_or_default();
+        let mathpng = bundle.join("mathpng");
+        let res = bundle.join("microtex-res");
         let cache_dir = PathBuf::from(env_or(
             "AM_MATH_CACHE",
             "/home/root/.ankimarkable-pure/math-cache",
         ));
-        // Only enable the MathJax path if the helper is actually present (it's a
-        // device binary; on a Mac spike it's absent → math spans stay raw).
-        let enabled = std::fs::metadata(&mathpng)
-            .map(|m| m.is_file())
-            .unwrap_or(false);
+        // Only enable the MathJax path if the helper is present (it's a device
+        // binary; in desktop test builds it's absent → math spans stay raw).
+        let enabled = mathpng.is_file();
         if enabled {
             let _ = std::fs::create_dir_all(&cache_dir);
         }
@@ -510,6 +508,14 @@ mod tests {
         let renderer = MathRenderer::new(PathBuf::new());
         let captures = renderer.re_math.captures(r"\(f&#x27;(t)\)").unwrap();
         assert_eq!(span_tex(&captures), "f'(t)");
+    }
+
+    #[test]
+    fn math_helper_is_found_beside_the_running_executable() {
+        let renderer = MathRenderer::new(PathBuf::new());
+        let bundle = std::env::current_exe().unwrap().parent().unwrap().to_path_buf();
+        assert_eq!(renderer.mathpng, bundle.join("mathpng"));
+        assert_eq!(renderer.res, bundle.join("microtex-res"));
     }
 
     #[test]

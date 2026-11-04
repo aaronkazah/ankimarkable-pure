@@ -59,9 +59,7 @@ if 'cat >' in command: sys.stdin.buffer.read()
     assert backup_call<upload_call, 'Backup must precede import'
     prepare_call=next(i for i,c in enumerate(calls) if 'ankimarkable-pure-tools prepare' in c[-1])
     assert upload_call<prepare_call, 'Prepare the imported content before browsing'
-    assert 'AM_MATHPNG=/home/root/xovi/exthome/appload/ankimarkable-pure/mathpng' in calls[prepare_call][-1]
-    assert 'AM_MATHPNG_RES=' in calls[prepare_call][-1]
-    assert 'AM_MATH_CACHE=' in calls[prepare_call][-1]
+    assert 'AM_MATH' not in calls[prepare_call][-1], 'The installed tools find their own math helper'
     assert '--exclude=.ankimarkable-pure/ankiweb.txt' in calls[backup_call][-1]
     assert '--exclude=.ankimarkable-pure/sync-auth.json' in calls[backup_call][-1]
     assert all(str(package) not in ' '.join(c) for c in calls), 'Local names must never become remote shell code'
@@ -77,6 +75,12 @@ if 'cat >' in command: sys.stdin.buffer.read()
     assert run('open').returncode==0
     assert __import__('json').loads(request.read_text())['action']=='open'
     assert any("printf '{}" in line and 'launcher-command.json' in line for line in log.read_text().splitlines()), 'Acknowledged requests must be cleared'
+    for action in ('enable','disable'):
+        log.unlink()
+        assert run(f'{action}-startup').returncode==0
+        calls=[__import__('json').loads(line) for line in log.read_text().splitlines()]
+        assert sum('-M' in c for c in calls)==1, 'Startup changes reuse the one authenticated connection'
+        assert any(c[-4:]==['sh','-s','--',action] for c in calls)
     (project/'scripts/install.sh').write_text('#!/bin/bash\nexit 0\n')
     (project/'scripts/install.sh').chmod(0o755)
     assert run('setup').returncode==0

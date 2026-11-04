@@ -12,6 +12,7 @@ The app has two parts: Anki manages cards and scheduling, and the tablet's nativ
 | Anki collection, scheduling, sync | `src/backend.rs` |
 | Card HTML, images, fonts, math | `src/render.rs`, `src/mathrender.rs` |
 | Setup, update, import, export, diagnostics | `ankipure` |
+| Automatic startup after a restart | `scripts/startup.sh`, `scripts/boot-launcher.sh` |
 | Read desktop Anki and its saved login | `scripts/desktop-anki.py` |
 
 ## Example: add a card action
@@ -50,6 +51,14 @@ The shared notebook ID and scratchpad page ID are saved in `native-notes.json`. 
 
 AnkiWeb or a configured Anki sync server is the authority for two-way merges. `sync-auth.json` stores a token and optional endpoint, with mode 600. Passwords are used only during login. Do not log or export credentials. Full downloads create a private recovery package before replacing local cards.
 
+## Card images
+
+The app and `ankimarkable-pure-tools prepare` find the `mathpng` helper and `microtex-res` beside their own executable, so both render identical card images and prepared images are reused in review. The image cache key includes the card HTML after math rendering. The renderer prints layout diagnostics for every card; the CLI keeps them in a temporary log and shows it only when preparation fails.
+
+## Automatic startup
+
+Paper Pure keeps `/etc` changes in an in-memory overlay that is discarded at restart. `scripts/startup.sh` validates the unit, unmounts that overlay so the change reaches the root file system, refuses to write if the overlay stays mounted, and restarts the tablet to restore the normal mounts. A software update installs a root file system without the unit. `scripts/boot-launcher.sh` starts the launcher only on the supported firmware and restores the stock interface if it fails.
+
 ## Test without an account
 
 The automated suite creates isolated sample collections and a localhost Anki sync server. It does not need a real Anki account. Installer and CLI contracts use an isolated fake device to check safe updates, backups, paths, and connection handling.
@@ -64,7 +73,7 @@ Check native editor changes on a Paper Pure running **3.28.0.172**. Start with t
 ./ankipure build
 ```
 
-The installable archive and checksum appear in `dist/`. Review source, licenses, device checks, and documentation before publishing. Include corresponding source with redistributed builds. Keep accounts, collections, notebook IDs, device logs, and screenshots containing personal notes out of the repository.
+The installable archive and checksum appear in `dist/`. Review source, licenses, device checks, and documentation before publishing. Every push also builds the archive in CI and keeps it as the `ankimarkable-pure-paper-pure` artifact. Publish that archive and `SHA256SUMS` as a GitHub release tagged `v` plus the `Cargo.toml` version, together with a source archive from `git archive`, because redistributed builds must include corresponding source. Keep accounts, collections, notebook IDs, device logs, and screenshots containing personal notes out of the repository.
 
 The native editor is part of reMarkable's installed software. This repository references its on-device components and does not redistribute them. Firmware support is deliberately pinned; validate a new firmware version before changing the installer guard.
 

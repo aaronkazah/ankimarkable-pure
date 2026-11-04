@@ -35,6 +35,8 @@ Anki on Paper Pure
   ./ankipure setup             Install the app and launcher when needed
   ./ankipure update            Back up progress and install the local build
   ./ankipure start             Start AppLoad after reboot
+  ./ankipure enable-startup    Start Anki automatically after the tablet restarts
+  ./ankipure disable-startup   Stop starting Anki automatically
   ./ankipure open              Open Anki on the tablet
   ./ankipure status            Check the connected tablet and installation
   ./ankipure doctor            Diagnose connection and build prerequisites
@@ -92,6 +94,15 @@ launcher() {
   remote "printf '{}\\n' > /home/root/.ankimarkable-pure/launcher-command.json"
   fail 'The tablet interface is waiting. Run ./ankipure unlock, then retry.'
 }
+open_app() {
+  "$root/scripts/start-launcher.sh" "$host"
+  launcher open
+}
+prepare_cards() {
+  echo 'Preparing card images. Large decks can take a few minutes.'
+  # The renderer prints layout diagnostics for every card; show them only when preparation fails.
+  remote 'log=$(mktemp); if /home/root/xovi/exthome/appload/ankimarkable-pure/ankimarkable-pure-tools prepare /home/root/.ankimarkable-pure >"$log" 2>&1; then grep "^Prepared [0-9]* cards" "$log"; rm -f "$log"; else tail -n 20 "$log" >&2; rm -f "$log"; exit 1; fi'
+}
 stop_app() {
   remote sh <<'REMOTE'
 app=/home/root/xovi/exthome/appload/ankimarkable-pure/ankimarkable-pure
@@ -113,10 +124,6 @@ backup() {
   remote 'tar -C /home/root --exclude=.ankimarkable-pure/sync-auth.json --exclude=.ankimarkable-pure/ankiweb.txt --exclude=.ankimarkable-pure/cache -czf - .ankimarkable-pure' > "$backup_path"
   printf 'Anki backup: %s\n' "$backup_path"
 }
-prepare_cards() {
-  remote 'AM_MATHPNG=/home/root/xovi/exthome/appload/ankimarkable-pure/mathpng AM_MATHPNG_RES=/home/root/xovi/exthome/appload/ankimarkable-pure/microtex-res AM_MATH_CACHE=/home/root/.ankimarkable-pure/math-cache /home/root/xovi/exthome/appload/ankimarkable-pure/ankimarkable-pure-tools prepare /home/root/.ankimarkable-pure'
-}
-
 build() {
   [[ -f "$root/Cargo.toml" ]] || fail 'Build requires the source download.'
   command -v docker >/dev/null || fail 'Install Docker Desktop first, then retry.'
@@ -170,8 +177,7 @@ else
   echo 'Your desktop cards are now on the tablet. Desktop Anki was not changed.'
 fi
 REMOTE
-  "$root/scripts/start-launcher.sh" "$host"
-  launcher open
+  open_app
 }
 case "$command" in
   help|-h|--help) help ;;
@@ -180,7 +186,9 @@ case "$command" in
   build) keep_awake; build ;;
   test) keep_awake; [[ -f "$root/Cargo.toml" ]] || fail 'Tests require the source download.'; "$root/scripts/test.sh" ;;
   start) connect; "$root/scripts/start-launcher.sh" "$host" ;;
-  open) connect; "$root/scripts/start-launcher.sh" "$host"; launcher open ;;
+  enable-startup) connect; "$root/scripts/startup.sh" "$host" enable ;;
+  disable-startup) connect; "$root/scripts/startup.sh" "$host" disable ;;
+  open) connect; open_app ;;
   status|doctor)
     if [[ "$command" == doctor ]]; then
       if command -v docker >/dev/null 2>&1; then
@@ -189,7 +197,7 @@ case "$command" in
     fi
     connect
     echo 'Tablet: Paper Pure · firmware 3.28.0.172'
-    remote 'test ! -s /home/root/xovi/extensions.d/appload.so || echo "Launcher: installed"; test ! -S /tmp/qtfb.sock || echo "Launcher: running"; test ! -x /home/root/xovi/exthome/appload/ankimarkable-pure/ankimarkable-pure || echo "Anki: installed"; test ! -f /home/root/.ankimarkable-pure/collection.anki2 || echo "Collection: present"'
+    remote 'test ! -s /home/root/xovi/extensions.d/appload.so || echo "Launcher: installed"; test ! -S /tmp/qtfb.sock || echo "Launcher: running"; test ! -f /etc/systemd/system/ankimarkable-start.service || echo "Launcher: starts automatically"; test ! -x /home/root/xovi/exthome/appload/ankimarkable-pure/ankimarkable-pure || echo "Anki: installed"; test ! -f /home/root/.ankimarkable-pure/collection.anki2 || echo "Collection: present"'
     ;;
   unlock) connect; ssh "${ssh_options[@]}" -tt "$host" 'stty -echo; pincode-rs login >/dev/null; result=$?; stty echo; exit "$result"'; echo 'Tablet storage unlocked.' ;;
   backup) connect; stop_app; backup ;;
@@ -199,12 +207,12 @@ case "$command" in
     remote 'umask 077; cat > /home/root/.ankimarkable-pure/import.apkg' < "$input"
     remote '/home/root/xovi/exthome/appload/ankimarkable-pure/ankimarkable-pure-tools import /home/root/.ankimarkable-pure/collection.anki2 /home/root/.ankimarkable-pure/import.apkg && rm -f /home/root/.ankimarkable-pure/import.apkg'
     prepare_cards
-    echo 'Deck imported and prepared. Reopen Anki on the tablet.'
+    open_app
     ;;
   prepare)
     connect; stop_app; backup
     prepare_cards
-    launcher open
+    open_app
     ;;
   export)
     if [[ $# == 0 ]]; then mkdir -p "$root/exports"; chmod 700 "$root/exports"; output="$root/exports/Collection-$(date -u +%Y%m%dT%H%M%SZ).apkg";
@@ -218,7 +226,7 @@ case "$command" in
     ;;
   sync-setup) connect; "$root/scripts/configure-sync.sh" "$host" ;;
   connect-anki) keep_awake; connect_desktop "$@" ;;
-  sync) keep_awake; connect; stop_app; backup; remote '/home/root/xovi/exthome/appload/ankimarkable-pure/ankimarkable-pure-tools sync /home/root/.ankimarkable-pure'; "$root/scripts/start-launcher.sh" "$host"; launcher open ;;
+  sync) keep_awake; connect; stop_app; backup; remote '/home/root/xovi/exthome/appload/ankimarkable-pure/ankimarkable-pure-tools sync /home/root/.ankimarkable-pure'; open_app ;;
   logs) connect; remote 'journalctl -u xochitl --no-pager | sed -n "/ankimarkable\|AnkiPure/p" | tail -n 60' ;;
   *) fail "Unknown command: $command. Run ./ankipure help." ;;
 esac

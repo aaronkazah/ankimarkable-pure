@@ -1,167 +1,180 @@
 # Anki on reMarkable Paper Pure
 
-Read your Anki cards, write a response with the native reMarkable editor, show the answer, and rate your recall. The question and revealed answer share one card box. Revealing keeps your attempt visible and writable beneath the answer, so you can compare it and add corrections. The writing area has its native toolbar across the top and can be resized. **Preview cards** opens any card, including cards that are not due.
+Review your Anki flashcards on a reMarkable Paper Pure and answer them in your own handwriting. Write your answer under the question, tap **Show answer**, compare, and rate how well you remembered. Anki schedules the next review from your rating, just as desktop Anki does.
 
-**0.4 preview:** the card layout, native input routing, visible test strokes, erasing, and saved handwriting have been checked on the supported tablet. Automated package transfer and local sync checks pass. Physical Marker latency and palm rejection still need acceptance.
+**Version 0.4 is a preview.** Reviewing, writing, erasing and saving have been checked on a Paper Pure. Pen latency and palm rejection still need more testing. Sync uses Anki's own sync code and passes automated tests against a local sync server, but hasn't yet been tried with a real AnkiWeb account. Desktop Anki keeps automatic backups, and **File → Create Backup** makes one on demand.
 
-## What the buttons mean
+## What you need
 
-- **Review due →**: practise cards Anki schedules for today. Your Again/Hard/Good/Easy rating sets the next review.
-- **Preview cards**: browse all cards without changing their schedule.
-- **+ / −**: expand or collapse a deck group. Scrolling or tapping its name does not begin a review.
-- **Show answer →**: reveal the correct answer, then grade your own recall. This is Anki's standard action; handwriting is not automatically marked.
-- **Settings → Writing area size**: choose Compact, Balanced or Large. Your choice is saved, and resizing keeps your current writing. Revealing an answer switches to Balanced to leave more room for the answer.
-- **Card actions**: undo the last review, flag a card, hide it until tomorrow, or pause its note. Available during review, not preview.
-
-A **deck** is Anki's name for a collection of flashcards.
-
-After a rating, **Saved · Next card** confirms progress. **Saved · Same card: another learning step** means Anki has scheduled another attempt at that card. This can happen immediately in a one-card deck because Anki brings nearby learning steps forward when no other cards are waiting. The rating is saved; use a parent deck to practise more cards together. Choose ratings based on your recall, not to force the card away.
-
-## One handwriting notebook
-
-All decks share one notebook named **Anki**. Tap it in your reMarkable library to open the flashcard app. Its permanent cover gives it a recognisable preview.
-
-The writing area is a scratchpad: it starts blank for every new attempt, including a repeated learning card, switching decks, or reopening the app. All cards reuse the same page, so practice does not create more notebooks or pages. Drag with two fingers to pan within that page. Separate multi-page answers are not supported. Showing the answer preserves the scratchpad; the next attempt clears it. Earlier saved handwriting from previous app versions remains in the notebook.
-
-Flashcard questions, answers, and scheduling stay in Anki. The library file opens the app while AppLoad is running; after a stock restart it remains a normal notebook until you run `./ankipure start`.
+- A reMarkable **Paper Pure** with software version **3.28.0.172**. The version is shown in **Settings → General → Paper Tablet → Software**. Other versions are refused, and nothing on the tablet is changed.
+- **Developer Mode** turned on. Turning it on erases the tablet; see step 1 below.
+- A Mac or Linux computer. Windows isn't supported.
+- A USB-C cable that carries data, not just power.
+- Internet on the computer during the first setup. Setup downloads the XOVI and AppLoad launchers from GitHub and checks them against known checksums.
+- To sync with desktop Anki: an AnkiWeb account, Wi-Fi on the tablet, and Python 3 on the computer. On a Mac, if Terminal says Python 3 is missing, run `xcode-select --install`.
 
 ## Install
 
-Supported: **Paper Pure**, firmware **3.28.0.172**, Developer Mode, and USB SSH. Enabling Developer Mode for the first time resets the tablet; follow [reMarkable's instructions](https://developer.remarkable.com/documentation/developer-mode) and back up first.
+1. **Back up, then turn on Developer Mode.** Turning it on erases the tablet, so first sync your notebooks to your reMarkable account. Then go to **Settings → General → Paper Tablet → Software → Advanced → Developer Mode**. From then on, the tablet shows a developer-mode warning each time it starts. That's normal. See [reMarkable's guide](https://developer.remarkable.com/documentation/developer-mode).
+2. **Download** the file ending in `-paper-pure.tar.gz` from the latest [release](https://github.com/aaronkazah/ankimarkable-pure/releases), and double-click it to extract the `ankimarkable-pure` folder.
+3. **Connect** the tablet to the computer with the USB cable, and unlock the tablet.
+4. **Open Terminal in that folder.** On a Mac, type `cd ` (with a space), drag the folder into the Terminal window, and press Return.
+5. **Run setup:**
 
-1. Extract the installable archive from [Releases](https://github.com/aaronkazah/ankimarkable-pure/releases).
-2. Connect the unlocked tablet with a USB data cable.
-3. Open Terminal in the extracted folder and run:
+   ```sh
+   ./ankipure setup
+   ```
 
-```sh
-./ankipure setup
-```
+   - The first time, Terminal asks `Are you sure you want to continue connecting`. Type `yes` and press Return.
+   - When asked for a password, type the tablet's SSH password. It's in **Settings → General → Help → About → Copyrights and licenses**, under **General information**. Nothing appears on screen while you type.
+   - Setup takes a few minutes. The tablet's interface restarts while the launcher installs.
 
-On a Mac, you can type `cd ` in Terminal, drag the extracted folder into the window, and press Return to enter that folder.
+When setup finishes, Anki opens on the tablet with a small sample deck. To open it later, tap **Anki** in the tablet's sidebar.
 
-Enter the tablet's SSH password when asked. It is under **Settings → Help → Copyrights and licenses**. A storage lock can be opened with `./ankipure unlock`; also unlock the tablet's on-screen passcode. The app opens automatically after installation. Later, use the tablet sidebar → **Anki**.
+To update, download the new release and run `./ankipure setup` from its folder. Your cards and progress are backed up first and kept.
 
-## Connect your desktop Anki
+### After the tablet restarts
 
-The easiest ongoing sync is **AnkiWeb**, using the same account on desktop and tablet.
+Setup doesn't change how the tablet starts. After a restart, the tablet starts normally and Anki is hidden. Connect it and run `./ankipure start` to bring Anki back to the sidebar.
 
-1. In desktop Anki, press **Sync** and sign into AnkiWeb. Complete the first sync with your desktop cards uploaded.
-2. With the tablet connected, run:
-
-```sh
-./ankipure connect-anki
-```
-
-The first connection copies a consistent snapshot of your desktop collection and media to the tablet, after backing up tablet data. It does not edit the live desktop collection. It also reads desktop Anki's saved sync login, so you do not type your AnkiWeb password again. Running the command again refreshes the login and keeps existing tablet review progress.
-
-If desktop Anki has several profiles, choose one:
+To have Anki start by itself instead, run this once:
 
 ```sh
-./ankipure connect-anki --profile "My profile"
+./ankipure enable-startup
 ```
 
-This command requires Python 3 and finds Anki's standard profile folder on macOS or Linux. Set `ANKI_BASE` if your profiles are stored elsewhere. A tablet connects to one desktop profile; it will refuse to silently replace an existing connection with another profile.
+The tablet restarts to finish. Unlock it, and **Anki** appears in the sidebar. If the launcher fails to start, the tablet falls back to its normal interface. To turn automatic startup off, run `./ankipure disable-startup`.
 
-Without an AnkiWeb login, the initial card copy still works offline. Sign into desktop Anki later and run `connect-anki` again to enable sync. You can also use `./ankipure sync-setup` to sign in privately in Terminal. Only a sync token is stored on the tablet, in a root-only file; the password is not saved.
+Automatic startup only works with software version 3.28.0.172. If the tablet installs a software update, it starts normally, without Anki, until a release of this app supports the update.
 
-## Keep Anki in the sidebar after a restart
+## Put your cards on the tablet
 
-After installing the current build, connect over USB and run:
+### Link desktop Anki (recommended)
 
-```sh
-./scripts/enable-startup.sh
-```
+This copies your cards to the tablet and keeps both in sync through AnkiWeb.
 
-This starts the app launcher after unlocking the tablet. It runs only on the supported firmware and restores the stock interface if the launcher fails. A firmware upgrade leaves the stock interface active until compatibility is checked again.
+1. In desktop Anki, sign into AnkiWeb and press **Sync**. If Anki asks, upload your desktop cards.
+2. Connect the tablet and run:
 
-## Everyday sync
+   ```sh
+   ./ankipure connect-anki
+   ```
 
-The tablet has no cloud-sync button. USB imports work without an account. If you configure AnkiWeb, use the Terminal command below to exchange edits and review progress, then sync desktop Anki. A USB import alone is not a two-way sync.
+This backs up the tablet's Anki data, then copies your desktop cards and media to the tablet. It reuses desktop Anki's saved AnkiWeb login, so you don't type your AnkiWeb password. Desktop Anki itself is never changed. The tablet stores only a sync token, never your password.
 
-With USB connected, you can sync from Terminal too:
+- If desktop Anki has several profiles, choose one: `./ankipure connect-anki --profile "My profile"`. A tablet links to one profile and refuses to switch silently to another.
+- Running `connect-anki` again refreshes the login and keeps the tablet's progress.
+- If desktop Anki isn't signed into AnkiWeb, your cards still copy, but they won't sync. Sign in on desktop later and run `connect-anki` again, or sign in from Terminal with `./ankipure sync-setup`.
+- If your Anki profiles are stored somewhere unusual, set `ANKI_BASE` to the folder that contains them.
 
-```sh
-./ankipure sync
-```
+### Import a deck file
 
-A folder of exported packages is useful for transferring decks, but it does not merge review progress and deletions like AnkiWeb. Use account sync for ongoing use. [Read Anki's sync guide](https://docs.ankiweb.net/manual/syncing).
-
-A full download saves a recovery `.apkg` on the tablet under `.ankimarkable-pure/.sync-backups/` before replacing local cards. The client does not automatically upload a replacement collection. Resolve an upload-required full sync in desktop Anki.
-
-## Import and export files
-
-To import a deck without an account, use **File → Export** in desktop Anki, choose a packaged deck (`.apkg`), and include media and scheduling. Then run:
+Use this if you don't use AnkiWeb. In desktop Anki, choose **File → Export**, pick **Anki Deck Package (\*.apkg)**, and tick **Include scheduling information** and **Include media**. Then run:
 
 ```sh
 ./ankipure import "My Deck.apkg"
-./ankipure open
 ```
 
-To export the tablet's cards, media, and review progress:
+The deck is added to the tablet's cards, and Anki opens when it's ready. Deck files are good for moving cards, but they don't merge review progress the way AnkiWeb sync does.
 
-```sh
-./ankipure export
-```
+### Card images
 
-The file appears in **exports/** beside the CLI. To choose another name or folder:
+The tablet draws each card the first time you open it, which can take a moment. `import` draws every card in advance. To do the same for cards from `connect-anki` or `sync`, run `./ankipure prepare`. Cards that haven't changed are reused.
 
-```sh
-./ankipure export "Saved Deck.apkg"
-```
+## Sync with AnkiWeb
 
-Open the exported `.apkg` with desktop Anki to import it. Anki packages contain cards and scheduling; handwritten pages stay in native reMarkable notebooks. Use reMarkable's notebook export tools for those pages.
+The app has no sync button. You sync from the computer, and the tablet must be on Wi-Fi, because it talks to AnkiWeb directly.
 
-## Card preparation
+1. Press **Sync** in desktop Anki.
+2. Connect the tablet and run `./ankipure sync`.
+3. Study on the tablet.
+4. Run `./ankipure sync` again, then press **Sync** in desktop Anki.
 
-Imports prepare both sides of every card before reopening the app. Existing prepared pages are reused when the card and its media have not changed. To prepare an existing collection manually, run `./ankipure prepare`. This keeps rendering work out of normal review. Cards use larger text in full-screen mode, and long answers can be scrolled to the end.
+Sometimes Anki needs a one-way full sync, for example after you change a note type on desktop. The tablet then replaces its cards with AnkiWeb's copy. Reviews it hadn't synced yet are saved in a recovery file on the tablet, in `/home/root/.ankimarkable-pure/.sync-backups/`, but they aren't merged. To avoid this, sync the tablet before you change note types. If AnkiWeb has no cards yet, the tablet asks you to upload from desktop Anki first.
 
-## Review or preview
+To save the tablet's cards, media and progress as a file, run `./ankipure export`. The file appears in `exports/` beside `ankipure`. To choose the name and folder, give a path: `./ankipure export "Saved Deck.apkg"`. Open the file in desktop Anki with **File → Import**.
 
-Choose **Review due →** beside a deck to review its due cards. Read **QUESTION** and write in **YOUR HANDWRITTEN RESPONSE** below it. Press the black **Show answer →** button at the bottom of the question box. Your writing stays visible and editable. The card box shows the original question, a divider, and **ANSWER** in one scroll above the writing area. Choose **Again**, **Hard**, **Good**, or **Easy** at the bottom, shown in four gray shades with the next-review intervals. The writing area clears for the next question. Grade your original recall, not the corrected answer: choose **Again** if your attempt was wrong.
+## Review your cards
 
-If there are no due cards, the app says so and offers **Preview cards**. Preview also appears beside every deck. It shows every card with Previous/Next navigation and does not grade or change scheduling.
+Tap **Review due →** beside a deck.
 
-The toolbar edits your handwritten notes. Card text and templates are edited in desktop Anki. Native pen types, thickness, eraser, selection, layers, text, and undo/redo come from the tablet's own editor. The scratchpad lives in the single **Anki** notebook and clears when another attempt begins. Handwriting is not automatically inserted into Anki fields.
+1. Read the question and write your answer in the area below it. The toolbar is the tablet's own: pens, eraser, selection, layers, text, undo and redo. Drag with two fingers to move around the page.
+2. Tap **Show answer →** in the question box. The answer appears under the question. Your writing stays, so you can add corrections.
+3. Rate your first attempt, not the corrected one, with the buttons just above the writing area: **Again** if you got it wrong, otherwise **Hard**, **Good** or **Easy**. Each button shows when the card comes back.
 
-The menu includes undo last review, card flags, bury, and suspend. Anki controls scheduling, including your collection's FSRS settings. Audio/video playback, interactive JavaScript card templates, automatic handwriting grading, and card authoring are not implemented.
+**Saved · Next card** confirms your rating. **Saved · Same card: another learning step** means Anki wants another try soon. In a deck with only one card, it can come straight back.
 
-## Useful commands
+- **Preview cards** opens any card, due or not, without changing its schedule. To grade cards, use **Review due →**.
+- **+ / −** opens or closes a group of decks.
+- **Card actions**, during review: undo the last rating, flag the card, hide it until tomorrow, or pause it.
+- **Settings → Writing area size**: Compact, Balanced or Large. Showing an answer switches the size to Balanced, and later cards keep Balanced until you change it.
 
-| Task | Command |
+Your handwriting goes on one scratch page in a notebook called **Anki**, which appears in your library once you've opened a card. Every attempt starts on a blank page, so practice never adds pages. Handwriting isn't saved into Anki or graded for you. While the launcher is running, tapping the **Anki** notebook opens the app; otherwise it opens as an ordinary notebook.
+
+The app follows your collection's scheduling settings, including FSRS. Edit cards in desktop Anki. Cards can't play audio or video or run JavaScript, and collapsible sections are always shown open.
+
+The screen may flash black briefly when the app opens or a page loads. That's the e-ink display refreshing.
+
+## Commands
+
+Run each command in Terminal from the `ankimarkable-pure` folder, with the tablet connected by USB. `./ankipure help` lists them too.
+
+| Command | What it does |
 |---|---|
-| Install or update a downloaded bundle | `./ankipure setup` |
-| Open the app | `./ankipure open` |
-| Start AppLoad after reboot | `./ankipure start` |
-| Check the tablet and installation | `./ankipure status` |
-| Diagnose connection problems | `./ankipure doctor` |
-| Back up tablet Anki data | `./ankipure backup` |
-| Read app logs | `./ankipure logs` |
+| `./ankipure setup` | Install or update the app from this folder |
+| `./ankipure open` | Open Anki on the tablet |
+| `./ankipure start` | Bring Anki back after the tablet restarts |
+| `./ankipure enable-startup` | Start Anki automatically after restarts |
+| `./ankipure disable-startup` | Stop starting Anki automatically |
+| `./ankipure connect-anki` | Copy desktop Anki's cards and link its AnkiWeb login |
+| `./ankipure sync` | Sync with AnkiWeb |
+| `./ankipure sync-setup` | Sign into AnkiWeb from Terminal |
+| `./ankipure import FILE.apkg` | Add a deck file |
+| `./ankipure export [FILE.apkg]` | Save cards, media and progress as a deck file |
+| `./ankipure prepare` | Draw every card's images in advance |
+| `./ankipure backup` | Back up the tablet's Anki data |
+| `./ankipure status` | Show what's installed and running |
+| `./ankipure doctor` | Check the connection and build tools |
+| `./ankipure unlock` | Enter the tablet's passcode from Terminal |
+| `./ankipure logs` | Show recent app logs |
 
-Backups are private files in **.backups/** beside the CLI, with sync credentials excluded. They contain Anki data and the scratchpad location. Back up saved notebooks with reMarkable's normal tools. The scratchpad is temporary.
+Each command asks for the tablet's password once. Commands that change Anki data back it up first, into `.backups/` beside `ankipure`. Backups never include your sync login. To use a different SSH address, put `--host root@ADDRESS` before the command.
 
-Use `./ankipure --host root@TABLET_IP COMMAND` for a different SSH address. If the USB connection is absent, the CLI will refuse to send credentials through a VPN route. Wake, unlock, and reconnect the tablet, then retry.
+## Troubleshooting
 
-## Build or add a feature
+- **Tablet unavailable**: wake and unlock the tablet, and check that the cable carries data.
+- **The tablet interface is waiting**: unlock the tablet, or run `./ankipure unlock` to type its passcode in Terminal. Then retry.
+- **Paper Pure USB connection is absent** (on a Mac with a VPN): the USB connection isn't up, so the tablet's address would go through the VPN. The command stops rather than send your password there. Reconnect the cable and retry.
+- **Unsupported tablet/firmware**: this release supports only a Paper Pure with software 3.28.0.172. Nothing was changed.
+- **XOVI is already installed**: you already use XOVI, and setup won't replace it. Add AppLoad 0.6.0 to your XOVI, then run setup again.
+- **REMOTE HOST IDENTIFICATION HAS CHANGED**: the tablet was reset, so its SSH key changed. Run `ssh-keygen -R 10.11.99.1`, then retry.
+- **Anki is missing after a restart**: run `./ankipure start`, or turn on automatic startup.
 
-With Docker running, a source checkout can be tested and updated with:
+## Remove Anki
+
+1. Save your cards with `./ankipure export`.
+2. If you turned on automatic startup, run `./ankipure disable-startup`. Otherwise, restart the tablet. Either way, it then starts normally, and Anki no longer loads.
+
+The **Anki** notebook stays in your library as an ordinary notebook; delete it if you like. To delete the app's files too, run `ssh root@10.11.99.1 'rm -rf /home/root/xovi /home/root/.ankimarkable-pure'` after the restart. This also removes the XOVI launcher. Turning off Developer Mode resets the tablet and removes everything.
+
+## Build from source
+
+With Docker running, in a clone of this repository:
 
 ```sh
-./ankipure test
-./ankipure update
+./ankipure test     # run the automated checks
+./ankipure build    # create the installable archive in dist/
+./ankipure update   # build, back up the tablet's Anki data, and install
 ```
 
-To create a distribution without installing it, run `./ankipure build`. The package and checksum appear in **dist/**. See [Development](docs/DEVELOPMENT.md) and [Testing](docs/TESTING.md).
+See [Development](docs/DEVELOPMENT.md) and [Testing](docs/TESTING.md).
 
-## Your software and notes
+## How it works
 
-The app uses AppLoad and runtime UI additions. It does not flash firmware or replace the reMarkable executable. Existing notebooks are kept. Enable launcher startup using the instructions above to keep Anki available after a restart. Without it, run `./ankipure start` after restarting.
-
-Brief black flashes can occur when the e-ink display refreshes during launch or when opening a native page. The app avoids reapplying identical screen states and adds no handwriting sleeps or batching. Physical refresh behavior must be checked on the supported tablet.
+The app runs through [AppLoad](https://github.com/asivery/rm-appload) on the [XOVI](https://github.com/asivery/xovi) launcher. It doesn't flash firmware or replace reMarkable's software, and it leaves your notebooks alone. Handwriting uses the tablet's own editor, which stays on the tablet; this project doesn't distribute it.
 
 ## License
 
-**AGPL-3.0-or-later.** Keep the license and attribution and provide corresponding source with redistributed builds.
+**AGPL-3.0-or-later.** If you share a build, keep the license and attribution and include the corresponding source.
 
-Built on [ankimarkable](https://github.com/abaj8494/ankimarkable), [Anki](https://github.com/ankitects/anki), [AppLoad](https://github.com/asivery/rm-appload), and [XOVI](https://github.com/asivery/xovi). Math uses [MicroTeX](https://github.com/NanoMichael/MicroTeX) and [tinyxml2](https://github.com/leethomason/tinyxml2). Font and math licenses are bundled. The proprietary reMarkable editor and assets stay on the tablet and are not distributed by this project.
-
-Navigation and rating buttons sit above the writing area. Preview lets you browse without changing the schedule; choose Review to grade your recall.
+Built on [ankimarkable](https://github.com/abaj8494/ankimarkable), [Anki](https://github.com/ankitects/anki), AppLoad and XOVI. Math uses [MicroTeX](https://github.com/NanoMichael/MicroTeX) and [tinyxml2](https://github.com/leethomason/tinyxml2). Font and math licenses are bundled.

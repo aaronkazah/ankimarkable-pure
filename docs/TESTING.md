@@ -19,6 +19,8 @@ The automated checks cover:
 - Download and review upload through a real localhost Anki sync server, including cached-token reuse and recovery exports before full downloads.
 - Installer staging: interrupted transfer preserves the previous app; successful update preserves data and migrates the sync endpoint.
 - CLI connection reuse, backup-before-import, private backup permissions, safe filenames, device guards, and launcher requests.
+- Automatic startup: the unit is validated before the tablet changes, written only after `/etc` reaches the root file system, refused while the overlay stays mounted, and removed cleanly. Unsupported tablets stay untouched.
+- The math helper is found beside the running executable, so CLI card preparation renders math the same way as the app.
 
 ## Device acceptance
 
@@ -33,6 +35,7 @@ Use Paper Pure firmware **3.28.0.172** and AppLoad **0.6.0**. Native editor chan
 7. Write strokes on multiple layers and add typed text. Reveal and grade. The next attempt must start blank, with the same scratchpad page. Repeat the same learning card, then close and reopen; each attempt must start blank while review progress persists.
 8. Review cards in two different decks, then close the app. Check that there is one **Anki** notebook with its cover and no additional pages per review. Tap the Anki notebook and confirm it opens the app directly.
 9. Confirm normal reMarkable notebooks still open and write correctly after closing Anki.
+10. Run `./ankipure enable-startup`. After the automatic restart and unlock, **Anki** must appear in the sidebar. Restart again from the power menu and confirm it returns. Run `./ankipure disable-startup`; after its restart, the tablet must start with the normal interface.
 
 The current build passes the Rust collection, package, and localhost sync tests and 49 QML checks, including seven real interface-to-database workflows. They cover all ratings, progress, undo, same-card learning repeats, a shared scratchpad, a text-free loading indicator, and library shortcut routing.
 
@@ -47,6 +50,6 @@ The interface checks include expanding and collapsing deck groups, tapping label
 
 ## Prepared pages
 
-Cache tests verify reuse across sessions, invalidation after card edits, persistent math rendering, and answers taller than 12,000 pixels. A full preparation run over 442 cards completed without changing scheduling or review records. On-device preview checks passed for question-to-Decks, answer-to-Decks, and a Decks request queued during loading. A terminal-injected native Marker stroke registered, and the next attempt cleared the scratchpad. The direct Anki sidebar entry is present and enabled. Startup is enabled; a complete power-cycle test remains separate from interface restart checks.
+Cache tests verify reuse across sessions, invalidation after card edits, persistent math rendering, and answers taller than 12,000 pixels. A full preparation run over 442 cards completed without changing scheduling or review records. On-device preview checks passed for question-to-Decks, answer-to-Decks, and a Decks request queued during loading. A terminal-injected native Marker stroke registered, and the next attempt cleared the scratchpad. The direct Anki sidebar entry is present and enabled. Automatic startup across a full restart still needs device acceptance step 10.
 
 Writing-area size checks cover Compact (28%), Balanced (45%) and Large (65%), with reveal switching to Balanced while preserving the editor and its writing. On-device Marker checks verify that original writing survives reveal, correction strokes register separately, and the next card clears the page. Native scrolling changed the viewport without changing pages. Physical multi-touch gesture acceptance remains separate from invoking the native scroll action.

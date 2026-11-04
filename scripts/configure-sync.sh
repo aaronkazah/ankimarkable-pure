@@ -9,4 +9,4 @@ printf '\n'
 printf '%s\n%s\n' "$username" "$password" | ssh "${ssh_options[@]}" "$host" \
   '/home/root/xovi/exthome/appload/ankimarkable-pure/ankimarkable-pure-tools configure-sync /home/root/.ankimarkable-pure'
 unset password
-printf 'Open Anki and tap Sync, or run ./ankipure sync.\n'
+printf 'Run ./ankipure sync to exchange cards and reviews with AnkiWeb.\n'

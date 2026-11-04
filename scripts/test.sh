@@ -14,6 +14,8 @@ docker run --rm --platform linux/arm64 -v "$root:/project:ro" \
   ankimarkable-pure-builder:1.95.0 python3 /project/tests/desktop_contract.py
 docker run --rm --platform linux/arm64 -v "$root:/project:ro" \
   ankimarkable-pure-builder:1.95.0 python3 /project/tests/installer_contract.py
+docker run --rm --platform linux/arm64 -v "$root:/project:ro" \
+  ankimarkable-pure-builder:1.95.0 python3 /project/tests/autostart_contract.py
 "$root/scripts/prepare-sdk.sh"
 docker run --rm --platform linux/arm64 -v "$root:/project:ro" \
   -v ankimarkable-pure-build:/build:ro -e ANKIMARKABLE_TEST_BINARY=/build/target/debug/ankimarkable-pure \
