@@ -28,13 +28,13 @@ Use Paper Pure firmware **3.28.0.172** and AppLoad **0.6.0**. Native editor chan
 2. Open a new card and write the first stroke. It must register and appear immediately.
 3. Confirm ink stays under the Marker, with palm rejection and the selected pen thickness.
 4. Try eraser, selection/move, undo/redo, layers, and text tools.
-5. Tap Show answer inside the question box. Confirm existing writing remains visible, add a correction, and check that the question and answer share one scroll above the writing area. Rating buttons must remain below the writing area, and only the next attempt clears it.
+5. Tap Show answer inside the question box. Confirm existing writing remains visible, add a correction, and check that the question and answer share one scroll above the writing area. Rating buttons must remain above the writing area, and only the next attempt clears it.
 6. Check that the four ratings have distinct grayscale fills and correct intervals.
 7. Write strokes on multiple layers and add typed text. Reveal and grade. The next attempt must start blank, with the same scratchpad page. Repeat the same learning card, then close and reopen; each attempt must start blank while review progress persists.
 8. Review cards in two different decks, then close the app. Check that there is one **Anki** notebook with its cover and no additional pages per review. Tap the Anki notebook and confirm it opens the app directly.
 9. Confirm normal reMarkable notebooks still open and write correctly after closing Anki.
 
-The current build passes the Rust collection, package, and localhost sync tests and 48 QML checks, including seven real interface-to-database workflows. They cover all ratings, progress, undo, same-card learning repeats, a shared scratchpad, a text-free loading indicator, and library shortcut routing.
+The current build passes the Rust collection, package, and localhost sync tests and 49 QML checks, including seven real interface-to-database workflows. They cover all ratings, progress, undo, same-card learning repeats, a shared scratchpad, a text-free loading indicator, and library shortcut routing.
 
 On-device checks use an isolated collection and terminal-injected Marker events. They verify visible first strokes, clearing strokes across layers and typed text, retaining the editor through reveal, reuse of the same scratch page, and clearing on a real same-card Again repeat. Tapping the library notebook launches the app directly. Reopening the normal collection uses the same empty scratchpad without creating a page. Historical saved pages are checked against a private backup. Physical Marker latency, palm rejection, and black-flash counts remain manual acceptance checks.
 
@@ -49,4 +49,4 @@ The interface checks include expanding and collapsing deck groups, tapping label
 
 Cache tests verify reuse across sessions, invalidation after card edits, persistent math rendering, and answers taller than 12,000 pixels. A full preparation run over 442 cards completed without changing scheduling or review records. On-device preview checks passed for question-to-Decks, answer-to-Decks, and a Decks request queued during loading. A terminal-injected native Marker stroke registered, and the next attempt cleared the scratchpad. The direct Anki sidebar entry is present and enabled. Startup is enabled; a complete power-cycle test remains separate from interface restart checks.
 
-Writing-area size checks cover Balanced (45%) and Large (65%), with reveal switching to Balanced while preserving the editor and its writing. On-device Marker checks verify that original writing survives reveal, correction strokes register separately, and the next card clears the page. Native scrolling changed the viewport without changing pages. Physical multi-touch gesture acceptance remains separate from invoking the native scroll action.
+Writing-area size checks cover Compact (28%), Balanced (45%) and Large (65%), with reveal switching to Balanced while preserving the editor and its writing. On-device Marker checks verify that original writing survives reveal, correction strokes register separately, and the next card clears the page. Native scrolling changed the viewport without changing pages. Physical multi-touch gesture acceptance remains separate from invoking the native scroll action.

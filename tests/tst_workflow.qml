@@ -47,7 +47,8 @@ Rectangle {
             tryCompare(item("answerImage"), "status", Image.Ready);
             verify(item("writingArea").visible);
             verify(item("writingArea").ready);
-            compare(item("writingArea").y + item("writingArea").height, item("ratings").y);
+            compare(item("ratings").y + item("ratings").height, item("writingLabel").y);
+            compare(item("writingArea").y + item("writingArea").height, app.height);
             verify(item("ratings").visible);
         }
         function grade(index) {

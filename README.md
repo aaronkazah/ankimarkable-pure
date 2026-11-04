@@ -10,7 +10,7 @@ Read your Anki cards, write a response with the native reMarkable editor, show t
 - **Preview cards**: browse all cards without changing their schedule.
 - **+ / −**: expand or collapse a deck group. Scrolling or tapping its name does not begin a review.
 - **Show answer →**: reveal the correct answer, then grade your own recall. This is Anki's standard action; handwriting is not automatically marked.
-- **Settings → Writing area size**: choose Balanced or Large. Your choice is saved, and resizing keeps your current writing. Revealing an answer switches to Balanced to leave more room for the answer.
+- **Settings → Writing area size**: choose Compact, Balanced or Large. Your choice is saved, and resizing keeps your current writing. Revealing an answer switches to Balanced to leave more room for the answer.
 - **Card actions**: undo the last review, flag a card, hide it until tomorrow, or pause its note. Available during review, not preview.
 
 A **deck** is Anki's name for a collection of flashcards.
@@ -163,3 +163,5 @@ Brief black flashes can occur when the e-ink display refreshes during launch or 
 **AGPL-3.0-or-later.** Keep the license and attribution and provide corresponding source with redistributed builds.
 
 Built on [ankimarkable](https://github.com/abaj8494/ankimarkable), [Anki](https://github.com/ankitects/anki), [AppLoad](https://github.com/asivery/rm-appload), and [XOVI](https://github.com/asivery/xovi). Math uses [MicroTeX](https://github.com/NanoMichael/MicroTeX) and [tinyxml2](https://github.com/leethomason/tinyxml2). Font and math licenses are bundled. The proprietary reMarkable editor and assets stay on the tablet and are not distributed by this project.
+
+Navigation and rating buttons sit above the writing area. Preview lets you browse without changing the schedule; choose Review to grade your recall.

@@ -43,7 +43,7 @@ Rectangle {
         location: "file:///home/root/.ankimarkable-pure/display.ini"
         property real writingFraction: 0.45
         Component.onCompleted: {
-            if (writingFraction !== 0.45 && writingFraction !== 0.65)
+            if (writingFraction !== 0.28 && writingFraction !== 0.45 && writingFraction !== 0.65)
                 writingFraction = 0.45;
         }
     }
@@ -263,6 +263,13 @@ Rectangle {
             }
             MenuSeparator {}
             MenuItem {
+                objectName: "writingSizeCompact"
+                text: "Compact"
+                checkable: true
+                checked: root.writingFraction === 0.28
+                onTriggered: root.writingFraction = 0.28
+            }
+            MenuItem {
                 objectName: "writingSizeBalanced"
                 text: "Balanced"
                 checkable: true
@@ -438,7 +445,7 @@ Rectangle {
         x: 0
         y: header.height
         width: root.width
-        height: notesLabel.y - header.height
+        height: (ratingBar.visible ? ratingBar.y : notesLabel.y) - header.height
         visible: root.model.kind === "card"
         color: "white"
         border.color: "#dddddd"
@@ -547,7 +554,7 @@ Rectangle {
         id: nativeEditor
         objectName: "writingArea"
         x: 0
-        y: (ratingBar.visible ? ratingBar.y : root.height) - height
+        y: root.height - height
         width: root.width
         height: root.height * (Qt.inputMethod.visible ? Math.max(0.60, root.writingFraction) : root.writingFraction)
         visible: root.model.kind === "card"
@@ -590,7 +597,7 @@ Rectangle {
     Rectangle {
         id: ratingBar
         objectName: "ratings"
-        anchors.bottom: parent.bottom
+        y: notesLabel.y - height
         width: parent.width
         height: 112
         visible: root.model.kind === "card" && root.model.revealed
@@ -651,7 +658,7 @@ Rectangle {
             Label {
                 width: ratingBar.width / 3
                 height: ratingBar.height
-                text: "Preview · no grading"
+                text: "Preview only\nUse Review to grade"
                 font.pixelSize: 26
                 horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter

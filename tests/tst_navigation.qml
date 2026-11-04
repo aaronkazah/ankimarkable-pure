@@ -39,7 +39,8 @@ Rectangle {
             item("writingSizeLarge").triggered();
             compare(item("writingArea").height,app.height*0.65);
             compare(app.model.card_id,"1");
-            compare(item("writingSizeCompact"), null);
+            item("writingSizeCompact").triggered();
+            compare(item("writingArea").height,app.height*0.28);
             item("writingSizeBalanced").triggered();
             compare(item("writingArea").height,app.height*0.45);
             compare(item("bridge").lastRequest,null);

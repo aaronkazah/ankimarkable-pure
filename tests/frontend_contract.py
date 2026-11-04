@@ -253,7 +253,7 @@ Rectangle {
             var back = front(); back.revealed = true; app.applyState(back);
         }
         function test_reveal_keeps_writing_ready_above_ratings_data() {
-            return [{tag:"Balanced",fraction:0.45},{tag:"Large",fraction:0.65}];
+            return [{tag:"Compact",fraction:0.28},{tag:"Balanced",fraction:0.45},{tag:"Large",fraction:0.65}];
         }
         function test_reveal_keeps_writing_ready_above_ratings(data) {
             app.writingFraction = data.fraction;
@@ -279,7 +279,8 @@ Rectangle {
             compare(item("questionImage").parent, item("answerImage").parent);
             verify(item("writingArea").visible);
             verify(item("writingArea").ready);
-            compare(item("writingArea").y + item("writingArea").height, item("ratings").y);
+            compare(item("ratings").y + item("ratings").height, item("writingLabel").y);
+            compare(item("writingArea").y + item("writingArea").height, app.height);
             verify(!item("writingLoading").visible);
             verify(!item("revealButton").visible);
             verify(item("ratings").visible);
