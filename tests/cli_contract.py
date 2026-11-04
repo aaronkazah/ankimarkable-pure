@@ -59,6 +59,9 @@ if 'cat >' in command: sys.stdin.buffer.read()
     assert backup_call<upload_call, 'Backup must precede import'
     prepare_call=next(i for i,c in enumerate(calls) if 'ankimarkable-pure-tools prepare' in c[-1])
     assert upload_call<prepare_call, 'Prepare the imported content before browsing'
+    assert 'AM_MATHPNG=/home/root/xovi/exthome/appload/ankimarkable-pure/mathpng' in calls[prepare_call][-1]
+    assert 'AM_MATHPNG_RES=' in calls[prepare_call][-1]
+    assert 'AM_MATH_CACHE=' in calls[prepare_call][-1]
     assert '--exclude=.ankimarkable-pure/ankiweb.txt' in calls[backup_call][-1]
     assert '--exclude=.ankimarkable-pure/sync-auth.json' in calls[backup_call][-1]
     assert all(str(package) not in ' '.join(c) for c in calls), 'Local names must never become remote shell code'

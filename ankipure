@@ -113,6 +113,10 @@ backup() {
   remote 'tar -C /home/root --exclude=.ankimarkable-pure/sync-auth.json --exclude=.ankimarkable-pure/ankiweb.txt --exclude=.ankimarkable-pure/cache -czf - .ankimarkable-pure' > "$backup_path"
   printf 'Anki backup: %s\n' "$backup_path"
 }
+prepare_cards() {
+  remote 'AM_MATHPNG=/home/root/xovi/exthome/appload/ankimarkable-pure/mathpng AM_MATHPNG_RES=/home/root/xovi/exthome/appload/ankimarkable-pure/microtex-res AM_MATH_CACHE=/home/root/.ankimarkable-pure/math-cache /home/root/xovi/exthome/appload/ankimarkable-pure/ankimarkable-pure-tools prepare /home/root/.ankimarkable-pure'
+}
+
 build() {
   [[ -f "$root/Cargo.toml" ]] || fail 'Build requires the source download.'
   command -v docker >/dev/null || fail 'Install Docker Desktop first, then retry.'
@@ -194,12 +198,12 @@ case "$command" in
     connect; stop_app; backup
     remote 'umask 077; cat > /home/root/.ankimarkable-pure/import.apkg' < "$input"
     remote '/home/root/xovi/exthome/appload/ankimarkable-pure/ankimarkable-pure-tools import /home/root/.ankimarkable-pure/collection.anki2 /home/root/.ankimarkable-pure/import.apkg && rm -f /home/root/.ankimarkable-pure/import.apkg'
-    remote '/home/root/xovi/exthome/appload/ankimarkable-pure/ankimarkable-pure-tools prepare /home/root/.ankimarkable-pure'
+    prepare_cards
     echo 'Deck imported and prepared. Reopen Anki on the tablet.'
     ;;
   prepare)
     connect; stop_app; backup
-    remote '/home/root/xovi/exthome/appload/ankimarkable-pure/ankimarkable-pure-tools prepare /home/root/.ankimarkable-pure'
+    prepare_cards
     launcher open
     ;;
   export)
