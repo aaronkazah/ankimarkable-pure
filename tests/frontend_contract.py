@@ -253,7 +253,7 @@ Rectangle {
             var back = front(); back.revealed = true; app.applyState(back);
         }
         function test_reveal_keeps_writing_ready_above_ratings_data() {
-            return [{tag:"Compact",fraction:0.28},{tag:"Balanced",fraction:0.45},{tag:"Large",fraction:0.65}];
+            return [{tag:"Balanced",fraction:0.45},{tag:"Large",fraction:0.65}];
         }
         function test_reveal_keeps_writing_ready_above_ratings(data) {
             app.writingFraction = data.fraction;
@@ -270,7 +270,10 @@ Rectangle {
             compare(item("revealButton").text, "Show answer →");
             verify(!item("ratings").visible);
             reveal();
-            compare(item("cardBox").height, height - item("ratings").height);
+            compare(app.writingFraction, 0.45);
+            compare(item("writingArea").height, app.height * 0.45);
+            compare(item("writingLabel").text, "YOUR HANDWRITTEN RESPONSE");
+            fuzzyCompare(item("cardBox").height, height - item("ratings").height + app.height * (data.fraction - 0.45), 0.01);
             verify(item("questionImage").visible);
             verify(item("answerImage").visible);
             compare(item("questionImage").parent, item("answerImage").parent);

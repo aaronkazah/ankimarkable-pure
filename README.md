@@ -10,7 +10,7 @@ Read your Anki cards, write a response with the native reMarkable editor, show t
 - **Preview cards**: browse all cards without changing their schedule.
 - **+ / −**: expand or collapse a deck group. Scrolling or tapping its name does not begin a review.
 - **Show answer →**: reveal the correct answer, then grade your own recall. This is Anki's standard action; handwriting is not automatically marked.
-- **Settings → Writing area size**: choose Compact, Balanced, or Large. Your choice is saved, and resizing keeps your current writing.
+- **Settings → Writing area size**: choose Balanced or Large. Your choice is saved, and resizing keeps your current writing. Revealing an answer switches to Balanced to leave more room for the answer.
 - **Card actions**: undo the last review, flag a card, hide it until tomorrow, or pause its note. Available during review, not preview.
 
 A **deck** is Anki's name for a collection of flashcards.

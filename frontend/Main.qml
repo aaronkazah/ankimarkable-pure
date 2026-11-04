@@ -42,6 +42,10 @@ Rectangle {
         id: preferences
         location: "file:///home/root/.ankimarkable-pure/display.ini"
         property real writingFraction: 0.45
+        Component.onCompleted: {
+            if (writingFraction !== 0.45 && writingFraction !== 0.65)
+                writingFraction = 0.45;
+        }
     }
     property var pendingNativeCard: null
     property string questionImageSource: ""
@@ -115,6 +119,7 @@ Rectangle {
             nativeEditor.hideResponse();
         } else if (next.revealed && !model.revealed) {
             nativeEditor.savePage();
+            root.writingFraction = 0.45;
         }
         if (next.card_id !== model.card_id || next.revealed !== model.revealed)
             cardScroll.contentY = 0;
@@ -257,13 +262,6 @@ Rectangle {
                 enabled: false
             }
             MenuSeparator {}
-            MenuItem {
-                objectName: "writingSizeCompact"
-                text: "Compact"
-                checkable: true
-                checked: root.writingFraction === 0.28
-                onTriggered: root.writingFraction = 0.28
-            }
             MenuItem {
                 objectName: "writingSizeBalanced"
                 text: "Balanced"
@@ -539,7 +537,8 @@ Rectangle {
         y: nativeEditor.y - height
         height: 44
         visible: root.model.kind === "card"
-        text: root.model.revealed ? "YOUR RESPONSE AND CORRECTIONS" : "YOUR HANDWRITTEN RESPONSE"
+        objectName: "writingLabel"
+        text: "YOUR HANDWRITTEN RESPONSE"
         font.pixelSize: 24
         verticalAlignment: Text.AlignVCenter
     }
