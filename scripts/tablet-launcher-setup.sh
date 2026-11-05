@@ -30,5 +30,6 @@ for i in $(seq 1 60); do
 done
 systemctl is-active --quiet xochitl
 test -S /tmp/qtfb.sock || { /home/root/xovi/stock; echo 'Launcher failed; stock interface restored.' >&2; exit 1; }
+sed -n 's/^IMG_VERSION="\(.*\)"/\1/p' /etc/os-release > /home/root/xovi/exthome/qt-resource-rebuilder/hashtab-firmware
 echo 'AppLoad installed and running. Reboot returns to stock until autostart is configured.'
 trap - EXIT

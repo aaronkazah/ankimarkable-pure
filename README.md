@@ -6,7 +6,7 @@ Review your Anki flashcards on a reMarkable Paper Pure and answer them in your o
 
 ## What you need
 
-- A reMarkable **Paper Pure** with software version **3.28.0.172**. The version is shown in **Settings → General → Paper Tablet → Software**. Other versions are refused, and nothing on the tablet is changed.
+- A reMarkable **Paper Pure** with software version **3.28.0.172 or 3.29.1.0**. The version is shown in **Settings → General → Paper Tablet → Software**. Other versions are refused, and nothing on the tablet is changed.
 - **Developer Mode** turned on. Turning it on erases the tablet; see step 1 below.
 - A Mac or Linux computer. Windows isn't supported.
 - A USB-C cable that carries data, not just power.
@@ -45,7 +45,7 @@ To have Anki start by itself instead, run this once:
 
 The tablet restarts to finish. Unlock it, and **Anki** appears in the sidebar. If the launcher fails to start, the tablet falls back to its normal interface. To turn automatic startup off, run `./ankipure disable-startup`.
 
-Automatic startup only works with software version 3.28.0.172. If the tablet installs a software update, it starts normally, without Anki, until a release of this app supports the update.
+Automatic startup works with software versions 3.28.0.172 and 3.29.1.0. Setup rebuilds the launcher resource map when the installed firmware changes. If the tablet installs a software update, it starts normally, without Anki, until a release of this app supports the update.
 
 ## Put your cards on the tablet
 
@@ -145,7 +145,7 @@ Each command asks for the tablet's password once. Commands that change Anki data
 - **Tablet unavailable**: wake and unlock the tablet, and check that the cable carries data.
 - **The tablet interface is waiting**: unlock the tablet, or run `./ankipure unlock` to type its passcode in Terminal. Then retry.
 - **Paper Pure USB connection is absent** (on a Mac with a VPN): the USB connection isn't up, so the tablet's address would go through the VPN. The command stops rather than send your password there. Reconnect the cable and retry.
-- **Unsupported tablet/firmware**: this release supports only a Paper Pure with software 3.28.0.172. Nothing was changed.
+- **Unsupported tablet/firmware**: this release supports a Paper Pure with software 3.28.0.172 or 3.29.1.0. Nothing was changed.
 - **XOVI is already installed**: you already use XOVI, and setup won't replace it. Add AppLoad 0.6.0 to your XOVI, then run setup again.
 - **REMOTE HOST IDENTIFICATION HAS CHANGED**: the tablet was reset, so its SSH key changed. Run `ssh-keygen -R 10.11.99.1`, then retry.
 - **Anki is missing after a restart**: run `./ankipure start`, or turn on automatic startup.

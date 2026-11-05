@@ -64,6 +64,10 @@ assert index(calls, "systemctl enable") < index(calls, "systemd-run")
 assert "/ ext4 ro" in mounts, "Return the root file system to read-only"
 assert "Automatic startup is on" in result.stdout
 
+result, calls, unit, mounts = run("enable", firmware="3.29.1.0")
+assert result.returncode == 0, result.stderr
+assert "boot-launcher.sh" in unit
+
 result, calls, unit, mounts = run("enable", collapses=False)
 assert result.returncode != 0 and "permanent" in result.stderr
 assert unit is None, "A change that would vanish at restart must not be written"

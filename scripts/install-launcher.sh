@@ -5,8 +5,8 @@ host=${1:-root@10.11.99.1}
 ssh_options=(-o ConnectTimeout=10)
 if [[ -n ${SSH_CONTROL_PATH:-} ]]; then ssh_options+=(-S "$SSH_CONTROL_PATH"); fi
 identity=$(ssh "${ssh_options[@]}" "$host" 'printf "%s|%s|" "$(hostname)" "$(uname -m)"; sed -n '\''s/^IMG_VERSION="\(.*\)"/\1/p'\'' /etc/os-release')
-[[ "$identity" == 'imx93-tatsu|aarch64|3.28.0.172' ]] || {
-  printf 'Unsupported tablet/firmware: %s. Tested: Paper Pure 3.28.0.172.\n' "$identity" >&2; exit 1;
+[[ "$identity" == 'imx93-tatsu|aarch64|3.28.0.172' || "$identity" == 'imx93-tatsu|aarch64|3.29.1.0' ]] || {
+  printf 'Unsupported tablet/firmware: %s. Tested: Paper Pure 3.28.0.172 or 3.29.1.0.\n' "$identity" >&2; exit 1;
 }
 ssh "${ssh_options[@]}" "$host" 'test ! -e /home/root/xovi' || {
   printf 'XOVI is already installed. Keep your existing launcher; this installer will not overwrite it.\n' >&2; exit 1;

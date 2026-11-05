@@ -9,7 +9,7 @@ for file in ankimarkable-pure ankimarkable-pure-tools mathpng manifest.json reso
   [[ -s "$bundle/$file" ]] || { printf 'Missing bundle file: %s\n' "$file" >&2; exit 1; }
 done
 identity=$(ssh "${ssh_options[@]}" "$host" 'printf "%s|%s|" "$(hostname)" "$(uname -m)"; sed -n '\''s/^IMG_VERSION="\(.*\)"/\1/p'\'' /etc/os-release')
-[[ "$identity" == 'imx93-tatsu|aarch64|3.28.0.172' ]] || { printf 'Unsupported tablet: %s\n' "$identity" >&2; exit 1; }
+[[ "$identity" == 'imx93-tatsu|aarch64|3.28.0.172' || "$identity" == 'imx93-tatsu|aarch64|3.29.1.0' ]] || { printf 'Unsupported tablet: %s\n' "$identity" >&2; exit 1; }
 ssh "${ssh_options[@]}" "$host" sh <<'REMOTE'
 set -eu
 test -s /home/root/xovi/extensions.d/appload.so || { echo 'Install AppLoad first.' >&2; exit 1; }

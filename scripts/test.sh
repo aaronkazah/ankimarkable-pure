@@ -23,3 +23,6 @@ docker run --rm --platform linux/arm64 -v "$root:/project:ro" \
 
 docker run --rm --platform linux/arm64 -v "$root:/project:ro" \
   ankimarkable-pure-math-builder:3.28.0.172 python3 /project/tests/startup_contract.py
+
+docker run --rm --platform linux/arm64 -v "$root:/project:ro" \
+  ankimarkable-pure-math-builder:3.28.0.172 python3 /project/tests/launcher_contract.py

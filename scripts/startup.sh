@@ -21,7 +21,7 @@ finish() {
 }
 trap finish EXIT
 if test "$action" = enable; then
-    grep -qx 'IMG_VERSION="3.28.0.172"' /etc/os-release || { echo 'Automatic startup supports firmware 3.28.0.172 only.' >&2; exit 1; }
+    grep -Eq '^IMG_VERSION="(3\.28\.0\.172|3\.29\.1\.0)"$' /etc/os-release || { echo 'Automatic startup supports firmware 3.28.0.172 or 3.29.1.0.' >&2; exit 1; }
     test -x "$launcher" || { echo 'Install Anki first with ./ankipure setup.' >&2; exit 1; }
     cat > "$stage/$name" <<UNIT
 [Unit]

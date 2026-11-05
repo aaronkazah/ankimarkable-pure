@@ -74,6 +74,8 @@ if 'cat >' in command: sys.stdin.buffer.read()
     assert run('import',str(package),environment=bad).returncode!=0
     assert not any('cat >' in line or 'kill -TERM' in line for line in log.read_text().splitlines()), 'Unsupported devices must remain untouched'
     log.unlink()
+    latest=env | {'CLI_IDENTITY':'imx93-tatsu|aarch64|3.29.1.0'}
+    assert run('open',environment=latest).returncode==0
     assert run('open').returncode==0
     assert __import__('json').loads(request.read_text())['action']=='open'
     assert any("printf '{}" in line and 'launcher-command.json' in line for line in log.read_text().splitlines()), 'Acknowledged requests must be cleared'

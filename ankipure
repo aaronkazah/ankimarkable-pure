@@ -75,7 +75,7 @@ connect() {
     owned_connection=true
   fi
   identity=$(ssh "${ssh_options[@]}" "$host" 'printf "%s|%s|" "$(hostname)" "$(uname -m)"; sed -n '\''s/^IMG_VERSION="\(.*\)"/\1/p'\'' /etc/os-release')
-  [[ "$identity" == 'imx93-tatsu|aarch64|3.28.0.172' ]] || fail "Unsupported tablet/firmware: $identity. Supported: Paper Pure 3.28.0.172."
+  [[ "$identity" == 'imx93-tatsu|aarch64|3.28.0.172' || "$identity" == 'imx93-tatsu|aarch64|3.29.1.0' ]] || fail "Unsupported tablet/firmware: $identity. Supported: Paper Pure 3.28.0.172 or 3.29.1.0."
 }
 remote() { ssh "${ssh_options[@]}" "$host" "$@"; }
 launcher() {
