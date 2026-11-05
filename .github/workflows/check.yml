@@ -13,6 +13,7 @@ jobs:
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
         with:
           name: ankimarkable-pure-paper-pure
+          if-no-files-found: error
           path: |
-            dist/ankimarkable-pure-0.4.0-paper-pure.tar.gz
+            dist/ankimarkable-pure-*-paper-pure.tar.gz
             dist/SHA256SUMS
