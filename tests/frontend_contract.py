@@ -110,14 +110,6 @@ QtObject {
     function setCoverPageNumber(bookId, page) { lastCover = [bookId, page]; }
 }
 """})
-    module("com.remarkable.devicetelemetry", {"DocumentTelemetry": """import QtQuick
-QtObject { property var document; property var dispatcher }
-"""})
-    module("com.remarkable.telemetry", {"singleton Dispatcher": """pragma Singleton
-import QtQuick
-QtObject {}
-"""})
-
     (stage / "NativeEditor.qml").write_text("""import QtQuick
 FocusScope {
     property bool ready: false

@@ -1,8 +1,6 @@
 import QtQuick
 import device.global
 import com.remarkable
-import com.remarkable.devicetelemetry
-import com.remarkable.telemetry as Telemetry
 import xofm.libs.library
 import xofm.libs.explorer
 import xofm.libs.retail
@@ -14,6 +12,7 @@ FocusScope {
     id: root
     focus: visible
     property var editor: null
+    property var documentTelemetry: null
     property string cardId: ""
     property bool ready: false
     property bool changing: false
@@ -182,7 +181,7 @@ FocusScope {
             root.error(component.errorString());
             return false;
         }
-        editor = component.createObject(root, {
+        const properties = {
             width: root.width,
             height: root.height,
             visible: true,
@@ -203,9 +202,22 @@ FocusScope {
             colorProfile: host.colorProfile,
             extraViewGestures: host.extraViewGestures,
             movePageSelection: host.pageSelection,
-            windowNavigator: host.windowNavigator,
-            documentTelemetry: telemetry
-        });
+            windowNavigator: host.windowNavigator
+        };
+        if (host.toolSet !== undefined) {
+            properties.toolSet = host.toolSet;
+            properties.deviceSceneViewBehavior = host.deviceSceneViewBehavior;
+            properties.documentViewListener = host.documentViewListener;
+            properties.documentOrientation = host.documentOrientation;
+        } else {
+            documentTelemetry = Qt.createQmlObject(
+                'import QtQuick; import com.remarkable.devicetelemetry; '
+                + 'import com.remarkable.telemetry as Telemetry; '
+                + 'DocumentTelemetry { dispatcher: Telemetry.Dispatcher }', root);
+            documentTelemetry.document = Qt.binding(() => root.editor?.document ?? null);
+            properties.documentTelemetry = documentTelemetry;
+        }
+        editor = component.createObject(root, properties);
         if (!editor) {
             root.error(component.errorString());
             return false;
@@ -350,9 +362,4 @@ FocusScope {
         drawingScene.controller.requestDeferredCompleted();
     }
 
-    DocumentTelemetry {
-        id: telemetry
-        document: root.editor?.document ?? null
-        dispatcher: Telemetry.Dispatcher
-    }
 }
