@@ -2,7 +2,7 @@
 name = "ankimarkable-pure"
 version = "0.4.0"
 edition = "2021"
-license = "AGPL-3.0-or-later"
+license = "AGPL-3.0-only"
 default-run = "ankimarkable-pure"
 description = "Anki reviews with the native reMarkable Paper Pure editor"
 

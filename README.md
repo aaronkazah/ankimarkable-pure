@@ -175,6 +175,6 @@ The app runs through [AppLoad](https://github.com/asivery/rm-appload) on the [XO
 
 ## License
 
-**AGPL-3.0-or-later.** If you share a build, keep the license and attribution and include the corresponding source.
+**AGPL-3.0**, the same license as ankimarkable. If you share a build, keep the license and attribution and include the corresponding source.
 
 Built on [ankimarkable](https://github.com/abaj8494/ankimarkable), [Anki](https://github.com/ankitects/anki), AppLoad and XOVI. Math uses [MicroTeX](https://github.com/NanoMichael/MicroTeX) and [tinyxml2](https://github.com/leethomason/tinyxml2). Font and math licenses are bundled.
