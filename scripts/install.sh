@@ -39,7 +39,7 @@ chmod 755 "$stage/ankimarkable-pure" "$stage/ankimarkable-pure-tools" "$stage/ma
 chown -R root:root "$stage"
 collection=/home/root/.ankimarkable-pure/collection.anki2
 if test ! -f "$collection"; then "$stage/ankimarkable-pure-tools" create-demo "$collection"; fi
-"$stage/ankimarkable-pure-tools" check "$collection"
+"$stage/ankimarkable-pure-tools" check "$collection" >/dev/null
 mkdir -p /home/root/xovi/exthome/appload
 previous="$stage.previous"
 if test -d "$app"; then mv "$app" "$previous"; fi

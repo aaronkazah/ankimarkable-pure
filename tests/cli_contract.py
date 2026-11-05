@@ -62,6 +62,8 @@ if 'cat >' in command: sys.stdin.buffer.read()
     assert 'AM_MATH' not in calls[prepare_call][-1], 'The installed tools find their own math helper'
     assert '--exclude=.ankimarkable-pure/ankiweb.txt' in calls[backup_call][-1]
     assert '--exclude=.ankimarkable-pure/sync-auth.json' in calls[backup_call][-1]
+    assert '--exclude=".ankimarkable-pure/card-*"' in calls[backup_call][-1], 'Quote the pattern so the tablet shell cannot expand it'
+    assert '--exclude=.ankimarkable-pure/math-cache' in calls[backup_call][-1]
     assert all(str(package) not in ' '.join(c) for c in calls), 'Local names must never become remote shell code'
     assert not (base/'unexpected').exists()
     backups=list((project/'.backups').glob('*.tar.gz'))

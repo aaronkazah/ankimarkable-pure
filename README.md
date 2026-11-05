@@ -138,7 +138,7 @@ Run each command in Terminal from the `ankimarkable-pure` folder, with the table
 | `./ankipure unlock` | Enter the tablet's passcode from Terminal |
 | `./ankipure logs` | Show recent app logs |
 
-Each command asks for the tablet's password once. Commands that change Anki data back it up first, into `.backups/` beside `ankipure`. Backups never include your sync login. To use a different SSH address, put `--host root@ADDRESS` before the command.
+Each command asks for the tablet's password once. Commands that change Anki data back it up first, into `.backups/` beside `ankipure`. Backups never include your sync login. They also leave out card images, which the tablet redraws when needed. To use a different SSH address, put `--host root@ADDRESS` before the command.
 
 ## Troubleshooting
 

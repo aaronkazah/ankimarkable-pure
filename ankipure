@@ -121,7 +121,8 @@ backup() {
   chmod 700 "$root/.backups"
   backup_path="$root/.backups/anki-$(date -u +%Y%m%dT%H%M%SZ)-$$.tar.gz"
   umask 077
-  remote 'tar -C /home/root --exclude=.ankimarkable-pure/sync-auth.json --exclude=.ankimarkable-pure/ankiweb.txt --exclude=.ankimarkable-pure/cache -czf - .ankimarkable-pure' > "$backup_path"
+  # Card images and rendered math are rebuilt on demand, so backups keep only cards, media and progress.
+  remote 'tar -C /home/root --exclude=.ankimarkable-pure/sync-auth.json --exclude=.ankimarkable-pure/ankiweb.txt --exclude=.ankimarkable-pure/cache --exclude=".ankimarkable-pure/card-*" --exclude=.ankimarkable-pure/math-cache -czf - .ankimarkable-pure' > "$backup_path"
   printf 'Anki backup: %s\n' "$backup_path"
 }
 build() {
