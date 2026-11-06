@@ -303,32 +303,17 @@ Rectangle {
     }
 }
 """)
-    (stage / "tst_writing.qml").write_text("""import QtQuick
-import QtTest
-import xofm.libs.library
-Rectangle {
-    width: 1404; height: 1872
-    id: screen
-    Item {
-        id: appWindow; width: 1404; height: 1872; z: 100
-        ProductionNativeEditor { id: writing; width: 1404; height: 500; y: 1372 }
-    }
-    Component { id: layerComponent; Item {} }
-    QtObject {
-        id: toolbar
-        property bool visible: true
-        property int shownToolsCount: 8
-        property bool expanded: true
-        property int position: 2
-        property int preference: 2
-        property int innerHeight: 100
-    }
-    Component {
-        id: editorComponent
-        FocusScope {
+    (stage / "MockDocumentView.qml").write_text("""import QtQuick
+FocusScope {
             property string currentPageId: "old"
             property int currentPage: 3
             property bool isLoading: true
+            Item { id: pageLabel; objectName: "pageLabel" }
+            Item { id: titleLabel; objectName: "titleLabel" }
+            Item { id: pageSliderBackground; objectName: "pageSliderBackground" }
+            Item { id: pageSlider; objectName: "pageSlider" }
+            Item { id: pages; objectName: "pages" }
+            readonly property var ankiNavigationControls: [pageLabel, titleLabel, pageSliderBackground, pageSlider, pages]
             property var document: ({id:"book"})
             property alias scene: scene
             property alias surface: surface
@@ -365,6 +350,26 @@ Rectangle {
                 function updateTransform() { transforms++; }
             }
         }
+""")
+    (stage / "tst_writing.qml").write_text("""import QtQuick
+import QtTest
+import xofm.libs.library
+Rectangle {
+    width: 1404; height: 1872
+    id: screen
+    Item {
+        id: appWindow; width: 1404; height: 1872; z: 100
+        ProductionNativeEditor { id: writing; width: 1404; height: 500; y: 1372 }
+    }
+    Component { id: layerComponent; Item {} }
+    QtObject {
+        id: toolbar
+        property bool visible: true
+        property int shownToolsCount: 8
+        property bool expanded: true
+        property int position: 2
+        property int preference: 2
+        property int innerHeight: 100
     }
     TestCase {
         name: "WritingReadiness"; when: windowShown
@@ -374,13 +379,42 @@ Rectangle {
             if (writing.editor) writing.editor.destroy();
             if (writing.surfaceLayer) writing.surfaceLayer.destroy();
             writing.surfaceLayer = layerComponent.createObject(screen, {width:1404, height:1872, z:101});
-            writing.editor = editorComponent.createObject(writing);
+            writing.editor = Qt.createComponent("MockDocumentView.qml").createObject(writing);
             writing.drawingScene = writing.editor.scene;
             writing.inputSurface = writing.editor.surface;
             writing.writingToolbar = toolbar;
             writing.toolbarPositioner = toolbar;
             toolbar.visible = true;
             writing.expectedPageId = "wanted";
+        }
+        function test_writing_keeps_pan_and_zoom_without_exit_or_page_gestures() {
+            const gesture = Qt.createQmlObject('import QtQuick; Item {property bool panAndZoomOnly: false}', screen);
+            writing.configureWritingControl(gesture);
+            verify(gesture.panAndZoomOnly);
+            gesture.destroy();
+        }
+        function test_notebook_exit_and_page_buttons_are_hidden_and_disabled() {
+            for (const name of ["close-documentview-button", "pageOverviewButton", "addPageButton",
+                                "secondaryToolLoader_pageOverviewButton", "secondaryToolLoader_addPageButton"]) {
+                const button = Qt.createQmlObject('import QtQuick; Item {}', screen);
+                button.objectName = name;
+                writing.configureWritingControl(button);
+                verify(!button.visible, name);
+                verify(!button.enabled, name);
+                button.destroy();
+            }
+            const pen = Qt.createQmlObject('import QtQuick; Item {objectName:"penButton"}', screen);
+            writing.configureWritingControl(pen);
+            verify(pen.visible);
+            verify(pen.enabled);
+            pen.destroy();
+        }
+        function test_page_counter_slider_and_overview_are_not_interactive() {
+            writing.hideNotebookNavigation();
+            for (const name of ["pageLabel", "titleLabel", "pageSliderBackground", "pageSlider", "pages"])
+                verify(!findChild(writing.editor, name).visible, name);
+            verify(!findChild(writing.editor, "pageSlider").enabled);
+            verify(!findChild(writing.editor, "pages").enabled);
         }
         function test_wrong_or_loading_page_never_becomes_ready() {
             writing.editor.isLoading = false;

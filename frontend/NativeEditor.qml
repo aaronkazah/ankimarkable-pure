@@ -56,7 +56,10 @@ FocusScope {
         target: root.writingToolbar
         function onVisibleChanged() { root.activateInput(); }
         function onExpandedChanged() { root.activateInput(); }
-        function onShownToolsCountChanged() { root.activateInput(); }
+        function onShownToolsCountChanged() {
+            root.configureWritingControls();
+            root.activateInput();
+        }
         function onPositionChanged() { root.activateInput(); }
         function onInnerHeightChanged() { root.activateInput(); }
     }
@@ -127,6 +130,7 @@ FocusScope {
         // beside that window, retaining its native toolbar exclusion regions.
         editor.parent = surfaceLayer;
         surfaceLayer.visible = visible;
+        configureWritingControls();
         editor.forceActiveFocus();
         drawingScene.forceActiveFocus();
         refreshSurface();
@@ -135,6 +139,32 @@ FocusScope {
             && writingToolbar.position === ToolbarPositioner.Position.Top
             && writingToolbar.innerHeight > 0;
         if (ready) Qt.callLater(refreshSurface);
+    }
+
+    function configureWritingControl(item) {
+        if (item.panAndZoomOnly !== undefined)
+            item.panAndZoomOnly = true;
+        if (["close-documentview-button", "pageOverviewButton", "addPageButton",
+             "secondaryToolLoader_pageOverviewButton", "secondaryToolLoader_addPageButton"].includes(item.objectName)) {
+            item.visible = Qt.binding(() => false);
+            item.enabled = false;
+        }
+    }
+
+    function configureWritingControls() {
+        const items = editor ? [editor] : [];
+        for (let i = 0; i < items.length; i++) {
+            configureWritingControl(items[i]);
+            for (let child of items[i].children || [])
+                items.push(child);
+        }
+    }
+
+    function hideNotebookNavigation() {
+        for (const item of editor.ankiNavigationControls) {
+            item.visible = Qt.binding(() => false);
+            item.enabled = false;
+        }
     }
 
     function hostContext() {
@@ -222,6 +252,7 @@ FocusScope {
             root.error(component.errorString());
             return false;
         }
+        hideNotebookNavigation();
         editor.width = Qt.binding(() => root.width);
         editor.height = Qt.binding(() => root.height);
         editor.documentClosed.connect(() => {
@@ -236,6 +267,7 @@ FocusScope {
         const items = [editor];
         for (let i = 0; i < items.length; i++) {
             const item = items[i];
+            configureWritingControl(item);
             if (item.strokeHandler !== undefined && item.tileManager !== undefined && item.viewport !== undefined) {
                 drawingScene = item;
             }

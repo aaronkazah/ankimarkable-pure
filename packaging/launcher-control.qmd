@@ -97,3 +97,12 @@ AFFECT /qml/device/view/navigator/Sidebar.qml
         }
     END TRAVERSE
 END AFFECT
+
+AFFECT /qml/device/view/documentview/DocumentView.qml
+    TRAVERSE FocusScope
+        LOCATE AFTER ALL
+        INSERT {
+            readonly property var ankiNavigationControls: [pageLabel, titleLabel, pageSliderBackground, pageSlider, pages]
+        }
+    END TRAVERSE
+END AFFECT

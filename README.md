@@ -98,7 +98,7 @@ To save the tablet's cards, media and progress as a file, run `./ankipure export
 
 Tap **Review due →** beside a deck.
 
-1. Read the question and write your answer in the area below it. The toolbar is the tablet's own: pens, eraser, selection, layers, text, undo and redo. Drag with two fingers to move around the page.
+1. Read the question and write your answer in the area below it. The toolbar is the tablet's own: pens, eraser, selection, layers, text, undo and redo. Drag with two fingers to scroll through your response. Notebook close gestures and page controls are disabled in the writing area; use **Decks** at the top to leave a card.
 2. Tap **Show answer →** in the question box. The answer appears under the question. Your writing stays, so you can add corrections.
 3. Rate your first attempt, not the corrected one, with the buttons just above the writing area: **Again** if you got it wrong, otherwise **Hard**, **Good** or **Easy**. Each button shows when the card comes back.
 
